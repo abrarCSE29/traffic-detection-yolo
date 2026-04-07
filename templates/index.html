@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Traffic Analytics Pro | Multi-Stream Tracking</title>
+    <title>Traffic Analytics</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -140,6 +140,22 @@
             color: white;
             border-color: var(--primary-blue);
         }
+
+        .demo-section {
+            background: white;
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .demo-video {
+            width: 100%;
+            max-width: 800px;
+            border-radius: 10px;
+            background: #000;
+            display: block;
+        }
         
         /* Video Modal Styles */
         .video-modal {
@@ -191,13 +207,14 @@
 <div class="main-container">
     <header class="d-flex justify-content-between align-items-center mb-3">
         <div>
-            <h3 class="fw-bold mb-0 text-dark"><i class="fas fa-microchip text-primary me-2"></i>Traffic AI Multi-Stream</h3>
-            <p class="text-muted small mb-0">Real-time Object Detection & Tracking</p>
+            <h3 class="fw-bold mb-0 text-dark"><i class="fas fa-microchip text-primary me-2"></i>Traffic AI</h3>
+            <p class="text-muted small mb-0">Real-time Traffic Detection & Tracking</p>
         </div>
         <div class="upload-bar shadow-sm">
             <span class="small text-muted">Upload video(s):</span>
             <input type="file" id="videoInput" class="form-control form-control-sm" style="width: 250px;" multiple accept="video/*">
             <button class="btn btn-primary btn-sm" id="startBtn">Start Analysis</button>
+            <button class="btn btn-outline-success btn-sm" id="demoBtn">See Demo</button>
         </div>
     </header>
 
@@ -226,6 +243,7 @@
 <script>
     const videoInput = document.getElementById('videoInput');
     const startBtn = document.getElementById('startBtn');
+    const demoBtn = document.getElementById('demoBtn');
     const streamsContainer = document.getElementById('streamsContainer');
     const classFilters = document.getElementById('classFilters');
     const selectAllBtn = document.getElementById('selectAllBtn');
@@ -378,6 +396,23 @@
         }
     };
 
+    demoBtn.onclick = async () => {
+        const selectedClasses = getSelectedClasses();
+        if (selectedClasses === 'all' || selectedClasses === '') {
+            return alert('Please select at least one class to detect.');
+        }
+
+        streamsContainer.innerHTML = '';
+        charts = [];
+        activeJobs = [];
+
+        createStreamSlot(0);
+        addVideoClickListener(0);
+        activeJobs.push(false);
+        charts.push(null);
+        runDemoSlot(0, selectedClasses);
+    };
+
     // Load classes and setup modal when page loads
     loadClasses();
     setupVideoModal();
@@ -513,6 +548,95 @@
             statusBadge.innerText = 'Error';
             statusBadge.className = 'badge bg-danger';
             activeJobs[slotIndex] = false;
+        }
+    }
+
+    async function runDemoSlot(slotIndex, selectedClasses) {
+        if (activeJobs[slotIndex]) return;
+        activeJobs[slotIndex] = true;
+
+        const frame = document.getElementById(`frame-${slotIndex}`);
+        const placeholder = document.getElementById(`placeholder-${slotIndex}`);
+        const bar = document.getElementById(`bar-${slotIndex}`);
+        const nameLabel = document.getElementById(`name-${slotIndex}`);
+        const statusBadge = document.getElementById(`status-${slotIndex}`);
+        const overlay = document.getElementById(`overlay-${slotIndex}`);
+
+        nameLabel.innerText = 'demo.mp4';
+        statusBadge.innerText = 'Preparing demo...';
+        statusBadge.className = 'badge bg-warning text-dark';
+        placeholder.classList.add('hidden');
+        frame.classList.remove('hidden');
+        overlay.classList.remove('hidden');
+
+        const frameQueue = [];
+        let isPlaying = false;
+        let targetFps = 15;
+        let frameDelay = 1000 / targetFps;
+
+        async function playFrames() {
+            if (isPlaying) return;
+            isPlaying = true;
+
+            while (frameQueue.length > 0 || activeJobs[slotIndex]) {
+                if (frameQueue.length > 0) {
+                    const frameData = frameQueue.shift();
+                    const imgSrc = "data:image/jpeg;base64," + frameData.frame;
+                    frame.src = imgSrc;
+                    bar.style.width = frameData.progress + '%';
+                    overlay.innerText = frameData.progress + '% | Buffer: ' + frameQueue.length;
+                    updateAnalytics(slotIndex, frameData.counts);
+                    updateModalIfActive(slotIndex, imgSrc);
+                    await new Promise(resolve => setTimeout(resolve, frameDelay));
+                } else {
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                }
+            }
+            isPlaying = false;
+        }
+
+        const formData = new FormData();
+        formData.append('selected_classes', selectedClasses);
+
+        try {
+            const response = await fetch('/demo-job', { method: 'POST', body: formData });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || 'Failed to create demo job');
+
+            nameLabel.innerText = data.video_name || 'demo.mp4';
+            statusBadge.innerText = 'Tracking Demo';
+            statusBadge.className = 'badge bg-primary';
+
+            const ws_protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const socket = new WebSocket(`${ws_protocol}//${window.location.host}/ws/${data.job_id}`);
+
+            socket.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+
+                if (msg.status === 'processing' && msg.frame) {
+                    if (msg.target_fps) {
+                        targetFps = msg.target_fps;
+                        frameDelay = 1000 / targetFps;
+                    }
+                    frameQueue.push(msg);
+                    if (!isPlaying) playFrames();
+                } else if (msg.status === 'completed') {
+                    statusBadge.innerText = 'Done';
+                    statusBadge.className = 'badge bg-success';
+                    if (msg.counts) updateAnalytics(slotIndex, msg.counts);
+                    socket.close();
+                }
+            };
+
+            socket.onclose = () => {
+                activeJobs[slotIndex] = false;
+                overlay.classList.add('hidden');
+            };
+        } catch (err) {
+            statusBadge.innerText = 'Error';
+            statusBadge.className = 'badge bg-danger';
+            activeJobs[slotIndex] = false;
+            alert(`Demo failed: ${err.message || err}`);
         }
     }
 

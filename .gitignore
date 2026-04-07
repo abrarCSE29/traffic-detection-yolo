@@ -6,3 +6,4 @@ dataset/*
 raw/*
 results/*
 runs/*
+models/best.pt

@@ -9,7 +9,7 @@ from pathlib import Path
 from collections import Counter
 from typing import Dict
 
-from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Request, Form
+from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Request, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +29,8 @@ app.add_middleware(
 # ── Configuration ─────────────────────────────────────────────────────────────
 UPLOAD_FOLDER = Path("uploads")
 RESULT_FOLDER = Path("results")
+DEMO_FOLDER = Path("demo_video")
+DEMO_VIDEO_PATH = DEMO_FOLDER / "demo.mp4"
 BEST_MODEL_PATH = Path("models/best.pt")
 CLASSES = ["Bike", "Bus", "Car", "Cng", "People", "Rickshaw", "Truck", "Mini-Truck", "Cycle"]
 
@@ -64,6 +66,7 @@ executor = ThreadPoolExecutor(max_workers=4)
 
 # Mount static folders
 app.mount("/results", StaticFiles(directory=str(RESULT_FOLDER)), name="results")
+app.mount("/demo_video", StaticFiles(directory=str(DEMO_FOLDER)), name="demo_video")
 
 # Storage for active jobs
 processing_jobs: Dict[str, dict] = {}
@@ -103,6 +106,30 @@ async def upload_video(video: UploadFile = File(...), selected_classes: str = Fo
     }
     
     return {"job_id": job_id}
+
+@app.post("/demo-job")
+async def create_demo_job(selected_classes: str = Form("all")):
+    """Create a processing job using built-in demo video."""
+    if not DEMO_VIDEO_PATH.exists():
+        raise HTTPException(status_code=404, detail="Demo video not found")
+
+    job_id = str(uuid.uuid4())
+
+    if selected_classes == "all":
+        filter_classes = CLASSES
+    else:
+        filter_classes = selected_classes.split(",")
+
+    processing_jobs[job_id] = {
+        "status": "ready",
+        "video_path": str(DEMO_VIDEO_PATH),
+        "total_frames": 0,
+        "current_frame": 0,
+        "counts": {},
+        "filter_classes": filter_classes
+    }
+
+    return {"job_id": job_id, "video_name": DEMO_VIDEO_PATH.name}
 
 @app.websocket("/ws/{job_id}")
 async def websocket_endpoint(websocket: WebSocket, job_id: str):
@@ -150,27 +177,78 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                 thread_model = YOLO(str(BEST_MODEL_PATH))
                 device = 'cpu'
             
-            # Track unique objects by their tracking ID
-            unique_objects = {}  # {track_id: class_name}
+            # Robust unique counting:
+            # - track_to_object maps volatile tracker IDs to stable object IDs
+            # - stable_objects stores last bbox per stable object for re-association
+            unique_objects = {}   # {stable_object_id: class_name}
+            track_to_object = {}  # {track_id: stable_object_id}
+            stable_objects = {}   # {stable_object_id: {"class_name": str, "bbox": np.ndarray, "last_seen": int}}
+            next_object_id = 0
+            reid_iou_threshold = 0.3
+            reid_max_gap_frames = 100
+            center_dist_factor = 2.0
             
             # JPEG encoding params for speed
             encode_params = [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
+
+            def compute_iou(box_a, box_b):
+                ax1, ay1, ax2, ay2 = box_a
+                bx1, by1, bx2, by2 = box_b
+                inter_x1 = max(ax1, bx1)
+                inter_y1 = max(ay1, by1)
+                inter_x2 = min(ax2, bx2)
+                inter_y2 = min(ay2, by2)
+                inter_w = max(0.0, inter_x2 - inter_x1)
+                inter_h = max(0.0, inter_y2 - inter_y1)
+                inter_area = inter_w * inter_h
+                area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+                area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+                union = area_a + area_b - inter_area
+                return inter_area / union if union > 0 else 0.0
+
+            def box_center(box):
+                x1, y1, x2, y2 = box
+                return ((x1 + x2) * 0.5, (y1 + y2) * 0.5)
+
+            def box_diag(box):
+                x1, y1, x2, y2 = box
+                w = max(1.0, x2 - x1)
+                h = max(1.0, y2 - y1)
+                return (w * w + h * h) ** 0.5
             
             try:
-                # Run YOLO tracking with fresh model instance
-                track_results = thread_model.track(
-                    source=video_path, 
-                    stream=True, 
-                    persist=True, 
-                    device=device,
-                    vid_stride=frame_skip,
-                    conf=0.25,  # Detection confidence threshold
-                    verbose=False
-                )
+                # Run YOLO tracking. If CUDA fails at runtime, retry on CPU.
+                try:
+                    track_results = thread_model.track(
+                        source=video_path,
+                        stream=True,
+                        persist=True,
+                        device=device,
+                        vid_stride=frame_skip,
+                        conf=0.4,  # Detection confidence threshold
+                        verbose=False
+                    )
+                except Exception as track_err:
+                    if device == 'cuda':
+                        print(f"Thread {job_id}: CUDA tracking failed ({track_err}), retrying on CPU")
+                        cpu_model = YOLO(str(BEST_MODEL_PATH))
+                        device = 'cpu'
+                        track_results = cpu_model.track(
+                            source=video_path,
+                            stream=True,
+                            persist=True,
+                            device=device,
+                            vid_stride=frame_skip,
+                            conf=0.4,
+                            verbose=False
+                        )
+                    else:
+                        raise
                 
                 for frame_idx, result in enumerate(track_results):
                     # Get original frame for custom annotation
                     frame = result.orig_img.copy()
+                    claimed_stable_ids = set()
                     
                     # Process and filter detections
                     if result.boxes is not None and len(result.boxes) > 0:
@@ -191,9 +269,53 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                                 # Get tracking ID if available
                                 track_id = int(track_ids_arr[i]) if track_ids_arr is not None else None
                                 
-                                # Register unique object
-                                if track_id is not None and track_id not in unique_objects:
-                                    unique_objects[track_id] = class_name
+                                # Register unique object with tracker-ID re-association guard
+                                if track_id is not None:
+                                    if track_id in track_to_object:
+                                        stable_id = track_to_object[track_id]
+                                        stable_objects[stable_id]["bbox"] = box
+                                        stable_objects[stable_id]["last_seen"] = frame_idx
+                                        claimed_stable_ids.add(stable_id)
+                                    else:
+                                        # Tracker ID may switch mid-video. Match existing stable
+                                        # object by IoU OR center distance (helps far/small objects).
+                                        matched_stable_id = None
+                                        best_score = -1.0
+                                        cx, cy = box_center(box)
+                                        diag = box_diag(box)
+                                        for stable_id, obj in stable_objects.items():
+                                            if stable_id in claimed_stable_ids:
+                                                continue
+                                            if obj["class_name"] != class_name:
+                                                continue
+                                            if frame_idx - obj["last_seen"] > reid_max_gap_frames:
+                                                continue
+                                            prev_box = obj["bbox"]
+                                            iou = compute_iou(box, prev_box)
+                                            pcx, pcy = box_center(prev_box)
+                                            center_dist = ((cx - pcx) ** 2 + (cy - pcy) ** 2) ** 0.5
+                                            near_enough = center_dist <= (center_dist_factor * diag)
+                                            if iou >= reid_iou_threshold or near_enough:
+                                                score = iou - (center_dist / (center_dist_factor * diag + 1e-6))
+                                                if score > best_score:
+                                                    best_score = score
+                                                    matched_stable_id = stable_id
+
+                                        if matched_stable_id is None:
+                                            matched_stable_id = next_object_id
+                                            next_object_id += 1
+                                            unique_objects[matched_stable_id] = class_name
+                                            stable_objects[matched_stable_id] = {
+                                                "class_name": class_name,
+                                                "bbox": box,
+                                                "last_seen": frame_idx,
+                                            }
+                                        else:
+                                            stable_objects[matched_stable_id]["bbox"] = box
+                                            stable_objects[matched_stable_id]["last_seen"] = frame_idx
+
+                                        track_to_object[track_id] = matched_stable_id
+                                        claimed_stable_ids.add(matched_stable_id)
                                 
                                 # Get class-specific color
                                 color = CLASS_COLORS.get(class_name, (0, 255, 0))  # Default green
