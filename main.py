@@ -31,6 +31,7 @@ UPLOAD_FOLDER = Path("uploads")
 RESULT_FOLDER = Path("results")
 DEMO_FOLDER = Path("demo_video")
 DEMO_VIDEO_PATH = DEMO_FOLDER / "demo.mp4"
+YOUTUBE_FOLDER = UPLOAD_FOLDER / "youtube"
 BEST_MODEL_PATH = Path("models/best.pt")
 CLASSES = ["Bike", "Bus", "Car", "Cng", "People", "Rickshaw", "Truck", "Mini-Truck", "Cycle"]
 
@@ -49,6 +50,7 @@ CLASS_COLORS = {
 
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 RESULT_FOLDER.mkdir(exist_ok=True)
+YOUTUBE_FOLDER.mkdir(parents=True, exist_ok=True)
 
 # Load YOLO model and move to GPU
 try:
@@ -130,6 +132,63 @@ async def create_demo_job(selected_classes: str = Form("all")):
     }
 
     return {"job_id": job_id, "video_name": DEMO_VIDEO_PATH.name}
+
+@app.post("/youtube-job")
+async def create_youtube_job(youtube_url: str = Form(...), selected_classes: str = Form("all")):
+    """Create a processing job by downloading a YouTube video."""
+    youtube_url = youtube_url.strip()
+    if not youtube_url:
+        raise HTTPException(status_code=400, detail="YouTube URL is required")
+    if "youtube.com" not in youtube_url and "youtu.be" not in youtube_url:
+        raise HTTPException(status_code=400, detail="Please provide a valid YouTube URL")
+
+    try:
+        import yt_dlp
+    except Exception:
+        raise HTTPException(status_code=500, detail="yt-dlp is not installed. Run: pip install yt-dlp")
+
+    job_id = str(uuid.uuid4())
+    outtmpl = str(YOUTUBE_FOLDER / f"{job_id}.%(ext)s")
+
+    ydl_opts = {
+        "format": "best[ext=mp4]/best",
+        "outtmpl": outtmpl,
+        "noplaylist": True,
+        "quiet": True,
+        "merge_output_format": "mp4",
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(youtube_url, download=True)
+            downloaded = ydl.prepare_filename(info)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to download YouTube video: {e}")
+
+    downloaded_path = Path(downloaded)
+    if not downloaded_path.exists():
+        # Try common merged/renamed extension
+        candidate = YOUTUBE_FOLDER / f"{job_id}.mp4"
+        if candidate.exists():
+            downloaded_path = candidate
+        else:
+            raise HTTPException(status_code=500, detail="Downloaded video file not found")
+
+    if selected_classes == "all":
+        filter_classes = CLASSES
+    else:
+        filter_classes = selected_classes.split(",")
+
+    processing_jobs[job_id] = {
+        "status": "ready",
+        "video_path": str(downloaded_path),
+        "total_frames": 0,
+        "current_frame": 0,
+        "counts": {},
+        "filter_classes": filter_classes
+    }
+
+    return {"job_id": job_id, "video_name": downloaded_path.name}
 
 @app.websocket("/ws/{job_id}")
 async def websocket_endpoint(websocket: WebSocket, job_id: str):
