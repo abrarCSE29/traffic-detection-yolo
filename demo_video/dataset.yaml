@@ -1,0 +1,14 @@
+names:
+- Bike
+- Bus
+- Car
+- Cng
+- People
+- Rickshaw
+- Truck
+- Mini-Truck
+- Cycle
+nc: 9
+path: /media/softograph/sg-ai/Untitled Folder/dataset
+train: images/train
+val: images/val

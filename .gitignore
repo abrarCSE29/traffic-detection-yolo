@@ -1,0 +1,8 @@
+uploads/*
+.venv
+*.zip
+.ipynb*
+dataset/*
+raw/*
+results/*
+runs/*
