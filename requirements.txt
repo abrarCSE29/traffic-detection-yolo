@@ -5,3 +5,4 @@ opencv-python==4.13.0.92
 python-multipart==0.0.24
 torch==2.11.0
 numpy==2.2.6
+websockets
