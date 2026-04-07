@@ -123,6 +123,18 @@
             font-size: 0.85rem;
             color: #6c757d;
         }
+        .filter-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .filter-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
         .class-checkbox {
             display: flex;
             align-items: center;
@@ -161,6 +173,18 @@
             border-radius: 10px;
             background: #000;
             display: block;
+        }
+        #demoBtn {
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+            color: #fff;
+            border: none;
+            font-weight: 600;
+            box-shadow: 0 6px 14px rgba(34, 197, 94, 0.35);
+        }
+        #demoBtn:hover {
+            background: linear-gradient(135deg, #16a34a, #15803d);
+            color: #fff;
+            transform: translateY(-1px);
         }
         
         /* Video Modal Styles */
@@ -206,6 +230,76 @@
         .video-container:hover {
             opacity: 0.9;
         }
+
+        /* Responsive layout */
+        @media (max-width: 992px) {
+            .main-container {
+                padding: 0 12px;
+                margin: 12px auto;
+            }
+
+            .main-container > header {
+                flex-direction: column;
+                align-items: flex-start !important;
+                gap: 12px;
+            }
+
+            .upload-bar {
+                width: 100%;
+                flex-wrap: wrap;
+            }
+
+            .upload-bar input[type="file"] {
+                width: 100% !important;
+                min-width: 220px;
+            }
+            .filter-actions {
+                width: 100%;
+                justify-content: flex-start;
+            }
+
+            .stream-container {
+                flex-direction: column;
+                padding: 12px;
+                gap: 12px;
+            }
+
+            .video-section,
+            .analytics-section {
+                width: 100%;
+                flex: 1 1 auto;
+            }
+
+            .video-container,
+            .live-frame {
+                width: 100%;
+                height: auto;
+                aspect-ratio: 16 / 9;
+            }
+
+            .stats-card {
+                min-height: 260px;
+            }
+        }
+
+        @media (max-width: 576px) {
+            .class-filters {
+                gap: 6px;
+            }
+
+            .class-checkbox {
+                padding: 4px 10px;
+                font-size: 0.8rem;
+            }
+
+            .overlay {
+                font-size: 0.72rem;
+                padding: 4px 8px;
+            }
+            .filter-actions .btn {
+                flex: 1;
+            }
+        }
     </style>
 </head>
 <body>
@@ -226,9 +320,9 @@
 
     <!-- Class Filter Section -->
     <div class="filter-section">
-        <div class="d-flex justify-content-between align-items-center">
+        <div class="filter-header">
             <h6 class="fw-bold mb-0"><i class="fas fa-filter me-2"></i>Filter Object Classes</h6>
-            <div>
+            <div class="filter-actions">
                 <button class="btn btn-sm btn-outline-primary" id="selectAllBtn">Select All</button>
                 <button class="btn btn-sm btn-outline-secondary" id="deselectAllBtn">Deselect All</button>
             </div>
