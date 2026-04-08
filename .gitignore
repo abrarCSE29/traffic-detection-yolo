@@ -7,3 +7,7 @@ raw/*
 results/*
 runs/*
 models/best.pt
+cookies/*
+.env
+__pycache__
+!cookies/.gitkeep

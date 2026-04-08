@@ -33,6 +33,7 @@ RESULT_FOLDER = Path("results")
 DEMO_FOLDER = Path("demo_video")
 DEMO_VIDEO_PATH = DEMO_FOLDER / "demo.mp4"
 YOUTUBE_FOLDER = UPLOAD_FOLDER / "youtube"
+YTDLP_COOKIES_FILE = os.getenv("YTDLP_COOKIES_FILE", "").strip()
 BEST_MODEL_PATH = Path("models/best.pt")
 CLASSES = ["Bike", "Bus", "Car", "Cng", "People", "Rickshaw", "Truck", "Mini-Truck", "Cycle"]
 
@@ -158,13 +159,25 @@ async def create_youtube_job(youtube_url: str = Form(...), selected_classes: str
         "quiet": True,
         "merge_output_format": "mp4",
     }
+    if YTDLP_COOKIES_FILE:
+        ydl_opts["cookiefile"] = YTDLP_COOKIES_FILE
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(youtube_url, download=True)
             downloaded = ydl.prepare_filename(info)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to download YouTube video: {e}")
+        err = str(e)
+        if "Sign in to confirm you’re not a bot" in err or "Sign in to confirm you're not a bot" in err:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "YouTube blocked anonymous download from this server IP. "
+                    "Set YTDLP_COOKIES_FILE to a valid exported YouTube cookies.txt file "
+                    "and retry."
+                ),
+            )
+        raise HTTPException(status_code=400, detail=f"Failed to download YouTube video: {err}")
 
     downloaded_path = Path(downloaded)
     if not downloaded_path.exists():
