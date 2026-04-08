@@ -15,6 +15,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from ultralytics import YOLO
+from dotenv import load_dotenv
+load_dotenv()  # Load environment variables from .env file
 
 app = FastAPI()
 
