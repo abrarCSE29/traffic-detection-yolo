@@ -368,6 +368,25 @@
     let charts = [];
     let activeJobs = [];
     let availableClasses = [];
+    let activeSockets = [];
+
+    function closeExistingConnections() {
+        activeJobs = activeJobs.map(() => false);
+        activeSockets.forEach((s) => {
+            try {
+                if (s && s.readyState === WebSocket.OPEN) s.close(1000, "New stream started");
+            } catch (_) {}
+        });
+        activeSockets = [];
+    }
+
+    function registerSocket(socket) {
+        activeSockets.push(socket);
+    }
+
+    function unregisterSocket(socket) {
+        activeSockets = activeSockets.filter((s) => s !== socket);
+    }
 
     // Modal functionality
     function setupVideoModal() {
@@ -492,7 +511,8 @@
             return alert('Please select at least one class to detect.');
         }
         
-        // Clear existing streams
+        // Close previous streams and clear UI
+        closeExistingConnections();
         streamsContainer.innerHTML = '';
         charts = [];
         activeJobs = [];
@@ -513,6 +533,7 @@
             return alert('Please select at least one class to detect.');
         }
 
+        closeExistingConnections();
         streamsContainer.innerHTML = '';
         charts = [];
         activeJobs = [];
@@ -535,6 +556,7 @@
             return alert('Please paste a YouTube link.');
         }
 
+        closeExistingConnections();
         streamsContainer.innerHTML = '';
         charts = [];
         activeJobs = [];
@@ -651,6 +673,7 @@
             
             const ws_protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const socket = new WebSocket(`${ws_protocol}//${window.location.host}/ws/${data.job_id}`);
+            registerSocket(socket);
 
             socket.onmessage = (event) => {
                 const msg = JSON.parse(event.data);
@@ -673,6 +696,7 @@
             };
 
             socket.onclose = () => {
+                unregisterSocket(socket);
                 activeJobs[slotIndex] = false;
                 overlay.classList.add('hidden');
             };
@@ -742,6 +766,7 @@
 
             const ws_protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const socket = new WebSocket(`${ws_protocol}//${window.location.host}/ws/${data.job_id}`);
+            registerSocket(socket);
 
             socket.onmessage = (event) => {
                 const msg = JSON.parse(event.data);
@@ -762,6 +787,7 @@
             };
 
             socket.onclose = () => {
+                unregisterSocket(socket);
                 activeJobs[slotIndex] = false;
                 overlay.classList.add('hidden');
             };
@@ -831,6 +857,7 @@
 
             const ws_protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const socket = new WebSocket(`${ws_protocol}//${window.location.host}/ws/${data.job_id}`);
+            registerSocket(socket);
 
             socket.onmessage = (event) => {
                 const msg = JSON.parse(event.data);
@@ -850,6 +877,7 @@
             };
 
             socket.onclose = () => {
+                unregisterSocket(socket);
                 activeJobs[slotIndex] = false;
                 overlay.classList.add('hidden');
             };
