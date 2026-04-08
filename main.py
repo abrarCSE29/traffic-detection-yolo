@@ -5,6 +5,7 @@ import uuid
 import base64
 import asyncio
 import numpy as np
+import threading
 from pathlib import Path
 from collections import Counter
 from typing import Dict
@@ -220,6 +221,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
     try:
         # Live streaming with per-frame delivery
         loop = asyncio.get_event_loop()
+        stop_event = threading.Event()
         
         # Create a queue for frame communication
         frame_queue = asyncio.Queue()
@@ -305,6 +307,10 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                         raise
                 
                 for frame_idx, result in enumerate(track_results):
+                    if stop_event.is_set():
+                        print(f"Thread {job_id}: stop requested, ending detection loop")
+                        break
+
                     # Get original frame for custom annotation
                     frame = result.orig_img.copy()
                     claimed_stable_ids = set()
@@ -413,16 +419,20 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                         }),
                         loop
                     )
+
+                    if stop_event.is_set():
+                        break
                 
                 # Signal completion with final unique counts
                 final_counts = Counter(unique_objects.values())
-                asyncio.run_coroutine_threadsafe(
-                    frame_queue.put({
-                        "status": "completed",
-                        "counts": dict(final_counts)
-                    }),
-                    loop
-                )
+                if not stop_event.is_set():
+                    asyncio.run_coroutine_threadsafe(
+                        frame_queue.put({
+                            "status": "completed",
+                            "counts": dict(final_counts)
+                        }),
+                        loop
+                    )
                 
             except Exception as thread_err:
                 print(f"Error in tracking thread {job_id}: {thread_err}")
@@ -432,7 +442,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                 )
         
         # Start processing in background thread
-        loop.run_in_executor(executor, process_video_stream)
+        detection_future = loop.run_in_executor(executor, process_video_stream)
         
         # Stream frames as they arrive in the queue
         while True:
@@ -465,8 +475,10 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                 break
 
     except WebSocketDisconnect:
+        stop_event.set()
         print(f"Client disconnected for job {job_id}")
     except Exception as e:
+        stop_event.set()
         print(f"Error processing job {job_id}: {e}")
         try:
             async with ws_lock:
@@ -474,6 +486,11 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         except:
             pass
     finally:
+        stop_event.set()
+        try:
+            detection_future.cancel()
+        except Exception:
+            pass
         await websocket.close()
 
 if __name__ == "__main__":
