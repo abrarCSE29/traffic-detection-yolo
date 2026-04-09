@@ -7,6 +7,7 @@ import asyncio
 import numpy as np
 import threading
 import time
+import torch
 from pathlib import Path
 from collections import Counter
 from typing import Dict
@@ -172,57 +173,27 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         
         def process_video_stream():
             """Process video and stream frames live at target FPS"""
-            # Load a fresh model instance per thread to avoid conflicts
             try:
                 thread_model = YOLO(str(BEST_MODEL_PATH))
-                thread_model.to('cuda')
-                device = 'cuda'
+                if torch.cuda.is_available():
+                    thread_model.to('cuda')
+                    device = 'cuda'
+                else:
+                    device = 'cpu'
             except Exception as e:
-                print(f"Thread {job_id}: CUDA unavailable ({e}), using CPU")
+                print(f"Thread {job_id}: Device init failed ({e}), using CPU")
                 thread_model = YOLO(str(BEST_MODEL_PATH))
                 device = 'cpu'
             
-            # Robust unique counting:
-            # - track_to_object maps volatile tracker IDs to stable object IDs
-            # - stable_objects stores last bbox per stable object for re-association
-            unique_objects = {}   # {stable_object_id: class_name}
-            track_to_object = {}  # {track_id: stable_object_id}
-            stable_objects = {}   # {stable_object_id: {"class_name": str, "bbox": np.ndarray, "last_seen": int}}
-            next_object_id = 0
-            reid_iou_threshold = 0.3
-            reid_max_gap_frames = 100
-            center_dist_factor = 2.0
+            # Cumulative unique counts using ByteTrack IDs
+            seen_track_ids = set()
+            class_counts = Counter()
             
             # JPEG encoding params for speed
             encode_params = [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
-
-            def compute_iou(box_a, box_b):
-                ax1, ay1, ax2, ay2 = box_a
-                bx1, by1, bx2, by2 = box_b
-                inter_x1 = max(ax1, bx1)
-                inter_y1 = max(ay1, by1)
-                inter_x2 = min(ax2, bx2)
-                inter_y2 = min(ay2, by2)
-                inter_w = max(0.0, inter_x2 - inter_x1)
-                inter_h = max(0.0, inter_y2 - inter_y1)
-                inter_area = inter_w * inter_h
-                area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
-                area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
-                union = area_a + area_b - inter_area
-                return inter_area / union if union > 0 else 0.0
-
-            def box_center(box):
-                x1, y1, x2, y2 = box
-                return ((x1 + x2) * 0.5, (y1 + y2) * 0.5)
-
-            def box_diag(box):
-                x1, y1, x2, y2 = box
-                w = max(1.0, x2 - x1)
-                h = max(1.0, y2 - y1)
-                return (w * w + h * h) ** 0.5
             
             try:
-                # Run YOLO tracking. If CUDA fails at runtime, retry on CPU.
+                # Run YOLO with ByteTrack enabled
                 try:
                     track_results = thread_model.track(
                         source=video_path,
@@ -230,141 +201,61 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                         persist=True,
                         device=device,
                         vid_stride=frame_skip,
-                        conf=0.4,  # Detection confidence threshold
+                        conf=0.3,
+                        iou=0.5,
+                        tracker="bytetrack.yaml", # Native ByteTrack integration
                         verbose=False,
-                        half=True if device == 'cuda' else False # FP16 only supported on CUDA
+                        half=True if device == 'cuda' else False
                     )
                 except Exception as track_err:
-                    if device == 'cuda':
-                        print(f"Thread {job_id}: CUDA tracking failed ({track_err}), retrying on CPU")
-                        cpu_model = YOLO(str(BEST_MODEL_PATH))
-                        device = 'cpu'
-                        track_results = cpu_model.track(
-                            source=video_path,
-                            stream=True,
-                            persist=True,
-                            device=device,
-                            vid_stride=frame_skip,
-                            conf=0.4,
-                            verbose=False,
-                            half=False
-                        )
-                    else:
-                        raise
+                    print(f"Tracking failed: {track_err}")
+                    raise
                 
                 for frame_idx, result in enumerate(track_results):
                     t_start = time.time()
-                    if stop_event.is_set():
-                        print(f"Thread {job_id}: stop requested, ending detection loop")
-                        break
+                    if stop_event.is_set(): break
 
-                    # Get original frame for custom annotation
                     frame = result.orig_img.copy()
-                    claimed_stable_ids = set()
                     
-                    # Process and filter detections
-                    if result.boxes is not None and len(result.boxes) > 0:
+                    if result.boxes is not None and result.boxes.id is not None:
                         boxes = result.boxes.xyxy.cpu().numpy()
                         cls_ids = result.boxes.cls.cpu().numpy().astype(int)
-                        confs = result.boxes.conf.cpu().numpy()
-                        track_ids_arr = result.boxes.id.cpu().numpy().astype(int) if result.boxes.id is not None else None
+                        track_ids = result.boxes.id.cpu().numpy().astype(int)
                         
-                        # Draw only selected class boxes
-                        for i, (box, cls_id, conf) in enumerate(zip(boxes, cls_ids, confs)):
+                        for i, (box, cls_id, track_id) in enumerate(zip(boxes, cls_ids, track_ids)):
                             if cls_id < len(CLASSES):
                                 class_name = CLASSES[cls_id]
+                                if class_name not in filter_classes: continue
                                 
-                                # Skip if class not in filter
-                                if class_name not in filter_classes:
-                                    continue
+                                # ByteTrack handles ID persistence. We just track uniqueness.
+                                if track_id not in seen_track_ids:
+                                    seen_track_ids.add(track_id)
+                                    class_counts[class_name] += 1
                                 
-                                # Get tracking ID if available
-                                track_id = int(track_ids_arr[i]) if track_ids_arr is not None else None
-                                
-                                # Register unique object with tracker-ID re-association guard
-                                if track_id is not None:
-                                    if track_id in track_to_object:
-                                        stable_id = track_to_object[track_id]
-                                        stable_objects[stable_id]["bbox"] = box
-                                        stable_objects[stable_id]["last_seen"] = frame_idx
-                                        claimed_stable_ids.add(stable_id)
-                                    else:
-                                        # Tracker ID may switch mid-video. Match existing stable
-                                        # object by IoU OR center distance (helps far/small objects).
-                                        matched_stable_id = None
-                                        best_score = -1.0
-                                        cx, cy = box_center(box)
-                                        diag = box_diag(box)
-                                        for stable_id, obj in stable_objects.items():
-                                            if stable_id in claimed_stable_ids:
-                                                continue
-                                            if obj["class_name"] != class_name:
-                                                continue
-                                            if frame_idx - obj["last_seen"] > reid_max_gap_frames:
-                                                continue
-                                            prev_box = obj["bbox"]
-                                            iou = compute_iou(box, prev_box)
-                                            pcx, pcy = box_center(prev_box)
-                                            center_dist = ((cx - pcx) ** 2 + (cy - pcy) ** 2) ** 0.5
-                                            near_enough = center_dist <= (center_dist_factor * diag)
-                                            if iou >= reid_iou_threshold or near_enough:
-                                                score = iou - (center_dist / (center_dist_factor * diag + 1e-6))
-                                                if score > best_score:
-                                                    best_score = score
-                                                    matched_stable_id = stable_id
-
-                                        if matched_stable_id is None:
-                                            matched_stable_id = next_object_id
-                                            next_object_id += 1
-                                            unique_objects[matched_stable_id] = class_name
-                                            stable_objects[matched_stable_id] = {
-                                                "class_name": class_name,
-                                                "bbox": box,
-                                                "last_seen": frame_idx,
-                                            }
-                                        else:
-                                            stable_objects[matched_stable_id]["bbox"] = box
-                                            stable_objects[matched_stable_id]["last_seen"] = frame_idx
-
-                                        track_to_object[track_id] = matched_stable_id
-                                        claimed_stable_ids.add(matched_stable_id)
-                                
-                                # Get class-specific color
-                                color = CLASS_COLORS.get(class_name, (0, 255, 0))  # Default green
-                                
-                                # Draw bounding box
+                                color = CLASS_COLORS.get(class_name, (0, 255, 0))
                                 x1, y1, x2, y2 = map(int, box)
                                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                                 
-                                # Draw label with adaptive text color for contrast
-                                label = f"{class_name} #{track_id}" if track_id else f"{class_name} {conf:.2f}"
+                                label = f"{class_name} #{track_id}"
                                 (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
                                 cv2.rectangle(frame, (x1, y1 - 20), (x1 + w, y1), color, -1)
-                                # Compute brightness from BGR and choose dark/light text
                                 b, g, r = color
                                 brightness = 0.114 * b + 0.587 * g + 0.299 * r
                                 text_color = (0, 0, 0) if brightness > 140 else (255, 255, 255)
                                 cv2.putText(frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 1)
                     
-                    # Encode frame with lower quality for speed
                     _, buffer = cv2.imencode('.jpg', frame, encode_params)
-                    # No longer base64 encoding here
                     frame_bytes = buffer.tobytes()
-                    
-                    # Count unique objects by class
-                    current_counts = Counter(unique_objects.values())
                     
                     processed_frames = min(total_frames, (frame_idx + 1) * frame_skip)
                     progress = int((processed_frames / total_frames) * 100) if total_frames > 0 else 0
-                    
-                    # Compute total loop time (ms)
                     inf_ms = int((time.time() - t_start) * 1000)
 
                     asyncio.run_coroutine_threadsafe(
                         frame_queue.put({
                             "type": "metadata",
                             "progress": progress,
-                            "counts": dict(current_counts),
+                            "counts": dict(class_counts),
                             "status": "processing",
                             "target_fps": target_fps,
                             "inference_time": inf_ms
@@ -372,10 +263,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                         loop
                     )
                     asyncio.run_coroutine_threadsafe(
-                        frame_queue.put({
-                            "type": "frame",
-                            "data": frame_bytes
-                        }),
+                        frame_queue.put({"type": "frame", "data": frame_bytes}),
                         loop
                     )
 
