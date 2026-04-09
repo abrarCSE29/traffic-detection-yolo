@@ -176,58 +176,41 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         frame_queue = asyncio.Queue()
         
         def process_video_stream():
-            """Process video and stream frames live at target FPS"""
+            """Inference Thread: Handles YOLO + ByteTrack only"""
             try:
                 thread_model = YOLO(str(BEST_MODEL_PATH))
-                if torch.cuda.is_available():
-                    thread_model.to('cuda')
-                    device = 'cuda'
-                else:
-                    device = 'cpu'
+                device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                if device == 'cuda': thread_model.to('cuda')
             except Exception as e:
-                print(f"Thread {job_id}: Device init failed ({e}), using CPU")
-                thread_model = YOLO(str(BEST_MODEL_PATH))
-                device = 'cpu'
+                print(f"Thread {job_id}: Init failed ({e}), using CPU")
+                thread_model = YOLO(str(BEST_MODEL_PATH)); device = 'cpu'
             
-            # Cumulative unique counts and speed tracking
             seen_track_ids = set()
             class_counts = Counter()
-            track_history = {} # {id: [(x, y, time), ...]}
-            
-            # Calibration: adjust these for different camera heights/angles
-            PX_TO_METER = 0.05 # Rough estimate for urban CCTV
-            SPEED_WINDOW = 10  # frames to average over
-            
-            # JPEG encoding params for speed
+            track_history = {}
+            PX_TO_METER = 0.05
+            SPEED_WINDOW = 10
             encode_params = [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
             
             try:
-                # Run YOLO with ByteTrack enabled
-                try:
-                    track_results = thread_model.track(
-                        source=video_path,
-                        stream=True,
-                        persist=True,
-                        device=device,
-                        vid_stride=frame_skip,
-                        conf=0.3,
-                        iou=0.5,
-                        tracker="bytetrack.yaml",
-                        verbose=False,
-                        half=True if device == 'cuda' else False
-                    )
-                except Exception as track_err:
-                    print(f"Tracking failed: {track_err}")
-                    raise
+                # Optimized track call: imgsz=480 for speed boost
+                track_results = thread_model.track(
+                    source=video_path, stream=True, persist=True, device=device,
+                    vid_stride=frame_skip, conf=0.3, iou=0.5,
+                    tracker="bytetrack.yaml", verbose=False,
+                    imgsz=480, # Lower resolution inference
+                    half=(device == 'cuda')
+                )
                 
                 for frame_idx, result in enumerate(track_results):
                     t_start = time.time()
                     if stop_event.is_set(): break
 
                     current_filters = processing_jobs.get(job_id, {}).get("filter_classes", [])
-                    frame = result.orig_img.copy()
+                    frame = result.orig_img # No copy here, do it in post-process if needed
                     current_frame_counts = Counter()
                     current_speeds = []
+                    boxes_to_draw = []
                     
                     if result.boxes is not None and result.boxes.id is not None:
                         boxes = result.boxes.xyxy.cpu().numpy()
@@ -239,86 +222,73 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                                 class_name = CLASSES[cls_id]
                                 if class_name not in current_filters: continue
                                 
-                                # 1. Update counts
                                 current_frame_counts[class_name] += 1
                                 if track_id not in seen_track_ids:
-                                    seen_track_ids.add(track_id)
-                                    class_counts[class_name] += 1
+                                    seen_track_ids.add(track_id); class_counts[class_name] += 1
                                 
-                                # 2. Speed Estimation
                                 x1, y1, x2, y2 = map(int, box)
                                 cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                                
-                                if track_id not in track_history:
-                                    track_history[track_id] = []
+                                if track_id not in track_history: track_history[track_id] = []
                                 track_history[track_id].append((cx, cy, time.time()))
                                 
-                                # Calculate speed if we have enough history
                                 speed_kmh = 0
                                 if len(track_history[track_id]) > SPEED_WINDOW:
-                                    hist = track_history[track_id]
-                                    start_pt = hist[-SPEED_WINDOW]
-                                    end_pt = hist[-1]
-                                    
-                                    # Euclidean distance in pixels
+                                    start_pt, end_pt = track_history[track_id][-SPEED_WINDOW], track_history[track_id][-1]
                                     pixel_dist = ((end_pt[0]-start_pt[0])**2 + (end_pt[1]-start_pt[1])**2)**0.5
                                     time_diff = end_pt[2] - start_pt[2]
-                                    
                                     if time_diff > 0:
-                                        meters_per_sec = (pixel_dist * PX_TO_METER) / time_diff
-                                        speed_kmh = meters_per_sec * 3.6 # m/s to km/h
+                                        speed_kmh = ((pixel_dist * PX_TO_METER) / time_diff) * 3.6
                                         current_speeds.append(speed_kmh)
-                                    
-                                    # Keep history window lean
-                                    if len(hist) > 20: track_history[track_id].pop(0)
-
-                                # 3. Visualization
-                                color = CLASS_COLORS.get(class_name, (0, 255, 0))
-                                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                                    if len(track_history[track_id]) > 20: track_history[track_id].pop(0)
                                 
-                                speed_label = f" {int(speed_kmh)} km/h" if speed_kmh > 2 else ""
-                                label = f"{class_name} #{track_id}{speed_label}"
-                                (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
-                                cv2.rectangle(frame, (x1, y1 - 20), (x1 + w, y1), color, -1)
-                                b, g, r = color
-                                brightness = 0.114 * b + 0.587 * g + 0.299 * r
-                                text_color = (0, 0, 0) if brightness > 140 else (255, 255, 255)
-                                cv2.putText(frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 1)
+                                boxes_to_draw.append({
+                                    "box": [x1, y1, x2, y2],
+                                    "label": f"{class_name} #{track_id}{f' {int(speed_kmh)} km/h' if speed_kmh > 2 else ''}",
+                                    "color": CLASS_COLORS.get(class_name, (0, 255, 0))
+                                })
                     
-                    try:
-                        _, buffer = cv2.imencode('.jpg', frame, encode_params)
-                        frame_bytes = buffer.tobytes()
-                    except Exception as enc_err:
-                        print(f"Job {job_id}: Frame encoding failed: {enc_err}")
-                        continue
+                    # Offload Visualization and Encoding to Post-Process logic
+                    # We reuse the frame_queue for metadata but handle frame separately or together
+                    # To keep it simple and fast, we'll do encoding here but move it after the 'next' result is requested
                     
+                    def visualize_and_encode(f, b_list):
+                        for b in b_list:
+                            x1, y1, x2, y2 = b["box"]
+                            cv2.rectangle(f, (x1, y1), (x2, y2), b["color"], 2)
+                            (w, h), _ = cv2.getTextSize(b["label"], cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+                            cv2.rectangle(f, (x1, y1 - 20), (x1 + w, y1), b["color"], -1)
+                            b_val, g, r = b["color"]
+                            text_color = (0, 0, 0) if (0.114*b_val + 0.587*g + 0.299*r) > 140 else (255, 255, 255)
+                            cv2.putText(f, b["label"], (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 1)
+                        _, buf = cv2.imencode('.jpg', f, encode_params)
+                        return buf.tobytes()
+
+                    # Calculate metrics BEFORE creating payload
                     processed_frames = min(total_frames, (frame_idx + 1) * frame_skip)
                     progress = int((processed_frames / total_frames) * 100) if total_frames > 0 else 0
                     inf_ms = int((time.time() - t_start) * 1000)
-                    
-                    # Global avg speed for this frame
                     avg_speed = sum(current_speeds)/len(current_speeds) if current_speeds else 0
 
-                    try:
-                        asyncio.run_coroutine_threadsafe(
-                            frame_queue.put({
-                                "type": "metadata",
-                                "progress": progress,
-                                "current_counts": dict(current_frame_counts),
-                                "cumulative_counts": dict(class_counts),
-                                "avg_speed": round(avg_speed, 1),
-                                "status": "processing",
-                                "target_fps": target_fps,
-                                "inference_time": inf_ms
-                            }),
-                            loop
-                        )
-                        asyncio.run_coroutine_threadsafe(
-                            frame_queue.put({"type": "frame", "data": frame_bytes}),
-                            loop
-                        )
-                    except Exception as q_err:
-                        print(f"Job {job_id}: Queue put failed: {q_err}")
+                    m_payload = {
+                        "type": "metadata", "progress": progress,
+                        "current_counts": dict(current_frame_counts),
+                        "cumulative_counts": dict(class_counts),
+                        "avg_speed": round(avg_speed, 1),
+                        "status": "processing", "target_fps": target_fps,
+                        "inference_time": inf_ms
+                    }
+                    
+                    # Execute visualization in parallel
+                    def post_process_task(f, b_list, m_data):
+                        try:
+                            f_bytes = visualize_and_encode(f, b_list)
+                            asyncio.run_coroutine_threadsafe(frame_queue.put(m_data), loop)
+                            asyncio.run_coroutine_threadsafe(frame_queue.put({"type": "frame", "data": f_bytes}), loop)
+                        except Exception as e:
+                            print(f"Post-process error: {e}")
+
+                    # Use the outer executor or a dedicated one for encoding
+                    executor.submit(post_process_task, frame.copy(), boxes_to_draw, m_payload)
 
                     if stop_event.is_set():
                         break
