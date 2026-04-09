@@ -231,7 +231,8 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                         device=device,
                         vid_stride=frame_skip,
                         conf=0.4,  # Detection confidence threshold
-                        verbose=False
+                        verbose=False,
+                        half=True if device == 'cuda' else False # FP16 only supported on CUDA
                     )
                 except Exception as track_err:
                     if device == 'cuda':
@@ -245,7 +246,8 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                             device=device,
                             vid_stride=frame_skip,
                             conf=0.4,
-                            verbose=False
+                            verbose=False,
+                            half=False
                         )
                     else:
                         raise
@@ -346,7 +348,8 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                     
                     # Encode frame with lower quality for speed
                     _, buffer = cv2.imencode('.jpg', frame, encode_params)
-                    frame_base64 = base64.b64encode(buffer).decode('utf-8')
+                    # No longer base64 encoding here
+                    frame_bytes = buffer.tobytes()
                     
                     # Count unique objects by class
                     current_counts = Counter(unique_objects.values())
@@ -359,12 +362,19 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
 
                     asyncio.run_coroutine_threadsafe(
                         frame_queue.put({
-                            "frame": frame_base64,
+                            "type": "metadata",
                             "progress": progress,
                             "counts": dict(current_counts),
                             "status": "processing",
                             "target_fps": target_fps,
                             "inference_time": inf_ms
+                        }),
+                        loop
+                    )
+                    asyncio.run_coroutine_threadsafe(
+                        frame_queue.put({
+                            "type": "frame",
+                            "data": frame_bytes
                         }),
                         loop
                     )
@@ -415,12 +425,15 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                     pass
                 break
             
-            # Send frame
+            # Send data based on type
             try:
                 async with ws_lock:
-                    await websocket.send_json(frame_data)
+                    if frame_data.get("type") == "metadata":
+                        await websocket.send_json(frame_data)
+                    elif frame_data.get("type") == "frame":
+                        await websocket.send_bytes(frame_data["data"])
             except Exception as send_err:
-                print(f"Error sending frame for job {job_id}: {send_err}")
+                print(f"Error sending data for job {job_id}: {send_err}")
                 break
 
     except WebSocketDisconnect:

@@ -545,6 +545,7 @@
         let isPlaying = false;
         let targetFps = 15;
         let temporalData = [];
+        let currentMetadata = null;
 
         async function play() {
             if (isPlaying) return;
@@ -552,19 +553,25 @@
             while (frameQueue.length > 0 || socket.readyState === WebSocket.OPEN) {
                 if (frameQueue.length > 0) {
                     const data = frameQueue.shift();
-                    const b64 = "data:image/jpeg;base64," + data.frame;
-                    frame.src = b64;
-                    if (activeModalSlot === idx) modalVideo.src = b64;
+                    const blobUrl = URL.createObjectURL(data.blob);
                     
-                    bar.style.width = data.progress + '%';
-                    bufferSpan.innerText = frameQueue.length;
+                    frame.src = blobUrl;
+                    if (activeModalSlot === idx) modalVideo.src = blobUrl;
                     
-                    if (data.inference_time) {
-                        globalStats.totalInferenceTime += data.inference_time;
-                        globalStats.inferenceCount++;
-                        document.getElementById('avg-latency').innerText = Math.round(globalStats.totalInferenceTime/globalStats.inferenceCount) + 'ms';
+                    // Clean up URL after it's loaded to prevent memory leaks
+                    frame.onload = () => URL.revokeObjectURL(blobUrl);
+                    
+                    if (data.metadata) {
+                        bar.style.width = data.metadata.progress + '%';
+                        if (data.metadata.inference_time) {
+                            globalStats.totalInferenceTime += data.metadata.inference_time;
+                            globalStats.inferenceCount++;
+                            document.getElementById('avg-latency').innerText = Math.round(globalStats.totalInferenceTime/globalStats.inferenceCount) + 'ms';
+                        }
+                        updateUI(idx, data.metadata.counts, temporalData);
                     }
-                    updateUI(idx, data.counts, temporalData);
+                    
+                    bufferSpan.innerText = frameQueue.length;
                     await new Promise(r => setTimeout(r, 1000/targetFps));
                 } else await new Promise(r => setTimeout(r, 50));
             }
@@ -572,17 +579,28 @@
         }
 
         socket.onmessage = (e) => {
-            const msg = JSON.parse(e.data);
-            if (msg.status === 'processing' && msg.frame) {
-                status.innerText = 'Streaming'; status.className = 'badge bg-primary';
-                targetFps = msg.target_fps || 15;
-                frameQueue.push(msg);
-                const total = Object.values(msg.counts).reduce((a,b)=>a+b, 0);
-                temporalData.push(total);
-                if (temporalData.length > 50) temporalData.shift();
+            if (typeof e.data === 'string') {
+                const msg = JSON.parse(e.data);
+                if (msg.status === 'processing' && msg.type === 'metadata') {
+                    status.innerText = 'Streaming'; 
+                    status.className = 'badge bg-primary';
+                    targetFps = msg.target_fps || 15;
+                    currentMetadata = msg;
+                    
+                    const total = Object.values(msg.counts).reduce((a,b)=>a+b, 0);
+                    temporalData.push(total);
+                    if (temporalData.length > 50) temporalData.shift();
+                } else if (msg.status === 'completed') {
+                    status.innerText = 'Finished'; 
+                    status.className = 'badge bg-success';
+                }
+            } else {
+                // Binary frame data
+                frameQueue.push({
+                    blob: e.data,
+                    metadata: currentMetadata
+                });
                 if (!isPlaying) play();
-            } else if (msg.status === 'completed') {
-                status.innerText = 'Finished'; status.className = 'badge bg-success';
             }
         };
         socket.onclose = () => {
