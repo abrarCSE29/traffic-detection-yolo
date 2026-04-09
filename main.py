@@ -216,6 +216,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                     if stop_event.is_set(): break
 
                     frame = result.orig_img.copy()
+                    current_frame_counts = Counter() # To track objects in THIS frame
                     
                     if result.boxes is not None and result.boxes.id is not None:
                         boxes = result.boxes.xyxy.cpu().numpy()
@@ -227,7 +228,10 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                                 class_name = CLASSES[cls_id]
                                 if class_name not in filter_classes: continue
                                 
-                                # ByteTrack handles ID persistence. We just track uniqueness.
+                                # 1. Update per-frame count
+                                current_frame_counts[class_name] += 1
+
+                                # 2. Update cumulative unique count
                                 if track_id not in seen_track_ids:
                                     seen_track_ids.add(track_id)
                                     class_counts[class_name] += 1
@@ -255,7 +259,8 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                         frame_queue.put({
                             "type": "metadata",
                             "progress": progress,
-                            "counts": dict(class_counts),
+                            "current_counts": dict(current_frame_counts),
+                            "cumulative_counts": dict(class_counts),
                             "status": "processing",
                             "target_fps": target_fps,
                             "inference_time": inf_ms

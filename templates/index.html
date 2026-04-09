@@ -455,10 +455,13 @@
     function processJobs(items, type) {
         closeExistingConnections();
         activeModalSlot = null;
+        slotUniqueCounts = {}; // Reset cumulative counts for new session
         streamsContainer.innerHTML = '';
         emptyState.classList.add('hidden');
         charts = []; temporalCharts = []; activeJobs = [];
         globalStats = { totalObjects: 0, peakObjects: 0, totalInferenceTime: 0, inferenceCount: 0 };
+        document.getElementById('total-tracked').innerText = '0';
+        document.getElementById('peak-intensity').innerText = '0';
         
         const selectedClasses = getSelectedClasses();
 
@@ -568,7 +571,7 @@
                             globalStats.inferenceCount++;
                             document.getElementById('avg-latency').innerText = Math.round(globalStats.totalInferenceTime/globalStats.inferenceCount) + 'ms';
                         }
-                        updateUI(idx, data.metadata.counts, temporalData);
+                        updateUI(idx, data.metadata.current_counts, data.metadata.cumulative_counts, temporalData);
                     }
                     
                     bufferSpan.innerText = frameQueue.length;
@@ -587,8 +590,9 @@
                     targetFps = msg.target_fps || 15;
                     currentMetadata = msg;
                     
-                    const total = Object.values(msg.counts).reduce((a,b)=>a+b, 0);
-                    temporalData.push(total);
+                    // Use CURRENT counts for temporal trend (objects per frame)
+                    const totalInFrame = Object.values(msg.current_counts).reduce((a,b)=>a+b, 0);
+                    temporalData.push(totalInFrame);
                     if (temporalData.length > 50) temporalData.shift();
                 } else if (msg.status === 'completed') {
                     status.innerText = 'Finished'; 
@@ -609,23 +613,34 @@
         };
     }
 
-    function updateUI(idx, counts, temporalData) {
-        const labels = Object.keys(counts);
-        const values = Object.values(counts);
-        const total = values.reduce((a,b)=>a+b, 0);
+    // State to track unique counts per slot for global aggregation
+    let slotUniqueCounts = {};
 
-        globalStats.totalObjects += total / 30;
-        document.getElementById('total-tracked').innerText = Math.floor(globalStats.totalObjects);
-        if (total > globalStats.peakObjects) {
-            globalStats.peakObjects = total;
-            document.getElementById('peak-intensity').innerText = total;
+    function updateUI(idx, currentCounts, cumulativeCounts, temporalData) {
+        // 1. Update cumulative 'Vehicles Tracked' card
+        const cumValues = Object.values(cumulativeCounts);
+        const totalUniqueInSlot = cumValues.reduce((a, b) => a + b, 0);
+        slotUniqueCounts[idx] = totalUniqueInSlot;
+        
+        const grandTotal = Object.values(slotUniqueCounts).reduce((a, b) => a + b, 0);
+        document.getElementById('total-tracked').innerText = grandTotal;
+
+        // 2. Update 'Peak Intensity' card (highest number of objects in any SINGLE frame across all feeds)
+        const currentLabels = Object.keys(currentCounts);
+        const currentValues = Object.values(currentCounts);
+        const totalInCurrentFrame = currentValues.reduce((a, b) => a + b, 0);
+
+        if (totalInCurrentFrame > globalStats.peakObjects) {
+            globalStats.peakObjects = totalInCurrentFrame;
+            document.getElementById('peak-intensity').innerText = globalStats.peakObjects;
         }
 
+        // 3. Update Bar Chart (Live Density)
         if (!charts[idx]) {
             const ctx = document.getElementById(`chart-${idx}`).getContext('2d');
             charts[idx] = new Chart(ctx, {
                 type: 'bar',
-                data: { labels, datasets: [{ data: values, backgroundColor: '#0284c7', borderRadius: 4 }] },
+                data: { labels: currentLabels, datasets: [{ data: currentValues, backgroundColor: '#0284c7', borderRadius: 4 }] },
                 options: {
                     responsive: true, maintainAspectRatio: false, indexAxis: 'y',
                     plugins: { legend: { display: false } },
@@ -636,8 +651,8 @@
                 }
             });
         } else {
-            charts[idx].data.labels = labels;
-            charts[idx].data.datasets[0].data = values;
+            charts[idx].data.labels = currentLabels;
+            charts[idx].data.datasets[0].data = currentValues;
             charts[idx].update('none');
         }
 
