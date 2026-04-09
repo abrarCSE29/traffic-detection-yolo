@@ -346,8 +346,8 @@
                 <div class="kpi-value" id="avg-latency">--ms</div>
             </div>
             <div class="glass-card kpi-card">
-                <div class="kpi-label">Active Feeds</div>
-                <div class="kpi-value" id="active-sockets-val">0</div>
+                <div class="kpi-label">Avg Traffic Speed</div>
+                <div class="kpi-value" id="avg-speed">0 <span style="font-size: 0.8rem; font-weight: 500;">km/h</span></div>
             </div>
         </div>
 
@@ -421,8 +421,22 @@
             div.onclick = (e) => {
                 if(e.target !== cb) cb.checked = !cb.checked;
                 div.classList.toggle('active', cb.checked);
+                broadcastFilterUpdate(); // Real-time update
             };
             classFilters.appendChild(div);
+        });
+    }
+
+    function broadcastFilterUpdate() {
+        const selectedStr = getSelectedClasses();
+        const selected = selectedStr ? selectedStr.split(',') : [];
+        activeSockets.forEach(socket => {
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({
+                    type: "filter_update",
+                    filter_classes: selected
+                }));
+            }
         });
     }
 
@@ -432,7 +446,7 @@
     }
 
     function getSelectedClasses() {
-        return Array.from(document.querySelectorAll('.filter-item input:checked')).map(cb => cb.value).join(',') || 'all';
+        return Array.from(document.querySelectorAll('.filter-item input:checked')).map(cb => cb.value).join(',');
     }
 
     startBtn.onclick = () => {
@@ -442,15 +456,21 @@
 
     demoBtn.onclick = () => processJobs([null], 'demo');
 
-    selectAllBtn.onclick = () => document.querySelectorAll('.filter-item').forEach(el => {
-        el.classList.add('active');
-        el.querySelector('input').checked = true;
-    });
+    selectAllBtn.onclick = () => {
+        document.querySelectorAll('.filter-item').forEach(el => {
+            el.classList.add('active');
+            el.querySelector('input').checked = true;
+        });
+        broadcastFilterUpdate();
+    };
     
-    deselectAllBtn.onclick = () => document.querySelectorAll('.filter-item').forEach(el => {
-        el.classList.remove('active');
-        el.querySelector('input').checked = false;
-    });
+    deselectAllBtn.onclick = () => {
+        document.querySelectorAll('.filter-item').forEach(el => {
+            el.classList.remove('active');
+            el.querySelector('input').checked = false;
+        });
+        broadcastFilterUpdate();
+    };
 
     function processJobs(items, type) {
         closeExistingConnections();
@@ -481,7 +501,7 @@
                         <div class="live-badge" id="badge-${idx}">
                             <i class="fas fa-circle"></i> LIVE
                         </div>
-                        <img id="frame-${idx}" class="w-100 h-100" style="object-fit: contain;">
+                        <img id="frame-${idx}" class="w-100 h-100" style="object-fit: contain; min-height: 100px; display: block;">
                         <div class="position-absolute bottom-0 end-0 p-3">
                             <div class="stat-pill">BUFFER: <span id="buffer-${idx}">0</span></div>
                         </div>
@@ -535,10 +555,10 @@
     }
 
     function connectWS(idx, jobId) {
+        console.log(`Job ${jobId}: Initiating connection...`);
         const socket = new WebSocket(`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/ws/${jobId}`);
-        activeSockets.push(socket);
-        document.getElementById('active-sockets-val').innerText = activeSockets.length;
-
+        socket.binaryType = 'blob'; 
+        
         const frame = document.getElementById(`frame-${idx}`);
         const bar = document.getElementById(`bar-${idx}`);
         const status = document.getElementById(`status-${idx}`);
@@ -550,73 +570,115 @@
         let temporalData = [];
         let currentMetadata = null;
 
-        async function play() {
-            if (isPlaying) return;
-            isPlaying = true;
-            while (frameQueue.length > 0 || socket.readyState === WebSocket.OPEN) {
-                if (frameQueue.length > 0) {
-                    const data = frameQueue.shift();
-                    const blobUrl = URL.createObjectURL(data.blob);
-                    
-                    frame.src = blobUrl;
-                    if (activeModalSlot === idx) modalVideo.src = blobUrl;
-                    
-                    // Clean up URL after it's loaded to prevent memory leaks
-                    frame.onload = () => URL.revokeObjectURL(blobUrl);
-                    
-                    if (data.metadata) {
-                        bar.style.width = data.metadata.progress + '%';
-                        if (data.metadata.inference_time) {
-                            globalStats.totalInferenceTime += data.metadata.inference_time;
-                            globalStats.inferenceCount++;
-                            document.getElementById('avg-latency').innerText = Math.round(globalStats.totalInferenceTime/globalStats.inferenceCount) + 'ms';
-                        }
-                        updateUI(idx, data.metadata.current_counts, data.metadata.cumulative_counts, temporalData);
-                    }
-                    
-                    bufferSpan.innerText = frameQueue.length;
-                    await new Promise(r => setTimeout(r, 1000/targetFps));
-                } else await new Promise(r => setTimeout(r, 50));
-            }
-            isPlaying = false;
-        }
+        // ATTACH HANDLERS IMMEDIATELY
+        socket.onopen = () => {
+            console.log(`Job ${jobId}: WebSocket connected`);
+            activeSockets.push(socket);
+            document.getElementById('active-sockets-val').innerText = activeSockets.length;
+        };
 
         socket.onmessage = (e) => {
-            if (typeof e.data === 'string') {
-                const msg = JSON.parse(e.data);
-                if (msg.status === 'processing' && msg.type === 'metadata') {
-                    status.innerText = 'Streaming'; 
-                    status.className = 'badge bg-primary';
-                    targetFps = msg.target_fps || 15;
-                    currentMetadata = msg;
+            try {
+                if (typeof e.data === 'string') {
+                    const msg = JSON.parse(e.data);
+                    console.log(`Job ${jobId}: Received JSON`, msg.type || msg.status);
                     
-                    // Use CURRENT counts for temporal trend (objects per frame)
-                    const totalInFrame = Object.values(msg.current_counts).reduce((a,b)=>a+b, 0);
-                    temporalData.push(totalInFrame);
-                    if (temporalData.length > 50) temporalData.shift();
-                } else if (msg.status === 'completed') {
-                    status.innerText = 'Finished'; 
-                    status.className = 'badge bg-success';
+                    if (msg.status === 'processing' && msg.type === 'metadata') {
+                        status.innerText = 'Streaming'; 
+                        status.className = 'badge bg-primary';
+                        targetFps = msg.target_fps || 15;
+                        currentMetadata = msg;
+                        
+                        const totalInFrame = Object.values(msg.current_counts).reduce((a,b)=>a+b, 0);
+                        temporalData.push(totalInFrame);
+                        if (temporalData.length > 50) temporalData.shift();
+                    } else if (msg.status === 'completed') {
+                        console.log(`Job ${jobId}: Completed`);
+                        status.innerText = 'Finished'; 
+                        status.className = 'badge bg-success';
+                    } else if (msg.error) {
+                        console.error(`Job ${jobId}: Backend error:`, msg.error);
+                        handleError(idx);
+                    }
+                } else {
+                    // Binary frame data
+                    if (!currentMetadata) {
+                        currentMetadata = { current_counts: {}, cumulative_counts: {}, progress: 0, avg_speed: 0 };
+                    }
+                    
+                    frameQueue.push({
+                        blob: e.data,
+                        metadata: JSON.parse(JSON.stringify(currentMetadata))
+                    });
+                    
+                    if (!isPlaying) play();
                 }
-            } else {
-                // Binary frame data
-                frameQueue.push({
-                    blob: e.data,
-                    metadata: currentMetadata
-                });
-                if (!isPlaying) play();
+            } catch (msgErr) {
+                console.error(`Job ${jobId}: Message handling error:`, msgErr);
             }
         };
-        socket.onclose = () => {
+
+        socket.onerror = (err) => console.error(`Job ${jobId}: WebSocket error observed:`, err);
+        
+        socket.onclose = (e) => {
+            console.log(`Job ${jobId}: WebSocket closed (${e.code})`);
             activeSockets = activeSockets.filter(s => s !== socket);
             document.getElementById('active-sockets-val').innerText = activeSockets.length;
         };
+
+        async function play() {
+            if (isPlaying) return;
+            isPlaying = true;
+            console.log(`Slot ${idx}: Starting playback loop`);
+            
+            while (frameQueue.length > 0 || socket.readyState === WebSocket.OPEN) {
+                if (frameQueue.length > 0) {
+                    try {
+                        const data = frameQueue.shift();
+                        const blob = (data.blob instanceof Blob) ? data.blob : new Blob([data.blob], { type: 'image/jpeg' });
+                        if (blob.size === 0) continue;
+
+                        const blobUrl = URL.createObjectURL(blob);
+                        
+                        frame.onload = () => {
+                            setTimeout(() => URL.revokeObjectURL(blobUrl), 200);
+                        };
+                        
+                        frame.onerror = (err) => {
+                            console.error(`Slot ${idx}: Image load error for URL ${blobUrl}`, err);
+                        };
+
+                        frame.src = blobUrl;
+                        if (activeModalSlot === idx) modalVideo.src = blobUrl;
+
+                        if (data.metadata) {
+                            bar.style.width = data.metadata.progress + '%';
+                            if (data.metadata.inference_time) {
+                                globalStats.totalInferenceTime += data.metadata.inference_time;
+                                globalStats.inferenceCount++;
+                                document.getElementById('avg-latency').innerText = Math.round(globalStats.totalInferenceTime/globalStats.inferenceCount) + 'ms';
+                            }
+                            updateUI(idx, data.metadata.current_counts, data.metadata.cumulative_counts, data.metadata.avg_speed, temporalData);
+                        }
+                        
+                        bufferSpan.innerText = frameQueue.length;
+                        await new Promise(r => setTimeout(r, 1000/targetFps));
+                    } catch (playErr) {
+                        console.error(`Slot ${idx}: Playback error:`, playErr);
+                    }
+                } else {
+                    await new Promise(r => setTimeout(r, 50));
+                }
+            }
+            isPlaying = false;
+            console.log(`Slot ${idx}: Playback loop ended`);
+        }
     }
 
     // State to track unique counts per slot for global aggregation
     let slotUniqueCounts = {};
 
-    function updateUI(idx, currentCounts, cumulativeCounts, temporalData) {
+    function updateUI(idx, currentCounts, cumulativeCounts, avgSpeed, temporalData) {
         // 1. Update cumulative 'Vehicles Tracked' card
         const cumValues = Object.values(cumulativeCounts);
         const totalUniqueInSlot = cumValues.reduce((a, b) => a + b, 0);
@@ -625,7 +687,7 @@
         const grandTotal = Object.values(slotUniqueCounts).reduce((a, b) => a + b, 0);
         document.getElementById('total-tracked').innerText = grandTotal;
 
-        // 2. Update 'Peak Intensity' card (highest number of objects in any SINGLE frame across all feeds)
+        // 2. Update 'Peak Intensity' card
         const currentLabels = Object.keys(currentCounts);
         const currentValues = Object.values(currentCounts);
         const totalInCurrentFrame = currentValues.reduce((a, b) => a + b, 0);
@@ -633,6 +695,11 @@
         if (totalInCurrentFrame > globalStats.peakObjects) {
             globalStats.peakObjects = totalInCurrentFrame;
             document.getElementById('peak-intensity').innerText = globalStats.peakObjects;
+        }
+
+        // 3. Update 'Avg Traffic Speed' card
+        if (avgSpeed > 0) {
+            document.getElementById('avg-speed').innerHTML = `${avgSpeed} <span style="font-size: 0.8rem; font-weight: 500;">km/h</span>`;
         }
 
         // 3. Update Bar Chart (Live Density)

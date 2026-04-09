@@ -97,9 +97,11 @@ async def upload_video(video: UploadFile = File(...), selected_classes: str = Fo
     
     # Parse selected classes
     if selected_classes == "all":
-        filter_classes = CLASSES
+        filter_classes = list(CLASSES)
+    elif not selected_classes:
+        filter_classes = []
     else:
-        filter_classes = selected_classes.split(",")
+        filter_classes = [c.strip() for c in selected_classes.split(",") if c.strip()]
 
     processing_jobs[job_id] = {
         "status": "ready",
@@ -121,9 +123,11 @@ async def create_demo_job(selected_classes: str = Form("all")):
     job_id = str(uuid.uuid4())
 
     if selected_classes == "all":
-        filter_classes = CLASSES
+        filter_classes = list(CLASSES)
+    elif not selected_classes:
+        filter_classes = []
     else:
-        filter_classes = selected_classes.split(",")
+        filter_classes = [c.strip() for c in selected_classes.split(",") if c.strip()]
 
     processing_jobs[job_id] = {
         "status": "ready",
@@ -185,9 +189,14 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                 thread_model = YOLO(str(BEST_MODEL_PATH))
                 device = 'cpu'
             
-            # Cumulative unique counts using ByteTrack IDs
+            # Cumulative unique counts and speed tracking
             seen_track_ids = set()
             class_counts = Counter()
+            track_history = {} # {id: [(x, y, time), ...]}
+            
+            # Calibration: adjust these for different camera heights/angles
+            PX_TO_METER = 0.05 # Rough estimate for urban CCTV
+            SPEED_WINDOW = 10  # frames to average over
             
             # JPEG encoding params for speed
             encode_params = [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
@@ -203,7 +212,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                         vid_stride=frame_skip,
                         conf=0.3,
                         iou=0.5,
-                        tracker="bytetrack.yaml", # Native ByteTrack integration
+                        tracker="bytetrack.yaml",
                         verbose=False,
                         half=True if device == 'cuda' else False
                     )
@@ -215,8 +224,10 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                     t_start = time.time()
                     if stop_event.is_set(): break
 
+                    current_filters = processing_jobs.get(job_id, {}).get("filter_classes", [])
                     frame = result.orig_img.copy()
-                    current_frame_counts = Counter() # To track objects in THIS frame
+                    current_frame_counts = Counter()
+                    current_speeds = []
                     
                     if result.boxes is not None and result.boxes.id is not None:
                         boxes = result.boxes.xyxy.cpu().numpy()
@@ -226,21 +237,47 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                         for i, (box, cls_id, track_id) in enumerate(zip(boxes, cls_ids, track_ids)):
                             if cls_id < len(CLASSES):
                                 class_name = CLASSES[cls_id]
-                                if class_name not in filter_classes: continue
+                                if class_name not in current_filters: continue
                                 
-                                # 1. Update per-frame count
+                                # 1. Update counts
                                 current_frame_counts[class_name] += 1
-
-                                # 2. Update cumulative unique count
                                 if track_id not in seen_track_ids:
                                     seen_track_ids.add(track_id)
                                     class_counts[class_name] += 1
                                 
-                                color = CLASS_COLORS.get(class_name, (0, 255, 0))
+                                # 2. Speed Estimation
                                 x1, y1, x2, y2 = map(int, box)
+                                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                                
+                                if track_id not in track_history:
+                                    track_history[track_id] = []
+                                track_history[track_id].append((cx, cy, time.time()))
+                                
+                                # Calculate speed if we have enough history
+                                speed_kmh = 0
+                                if len(track_history[track_id]) > SPEED_WINDOW:
+                                    hist = track_history[track_id]
+                                    start_pt = hist[-SPEED_WINDOW]
+                                    end_pt = hist[-1]
+                                    
+                                    # Euclidean distance in pixels
+                                    pixel_dist = ((end_pt[0]-start_pt[0])**2 + (end_pt[1]-start_pt[1])**2)**0.5
+                                    time_diff = end_pt[2] - start_pt[2]
+                                    
+                                    if time_diff > 0:
+                                        meters_per_sec = (pixel_dist * PX_TO_METER) / time_diff
+                                        speed_kmh = meters_per_sec * 3.6 # m/s to km/h
+                                        current_speeds.append(speed_kmh)
+                                    
+                                    # Keep history window lean
+                                    if len(hist) > 20: track_history[track_id].pop(0)
+
+                                # 3. Visualization
+                                color = CLASS_COLORS.get(class_name, (0, 255, 0))
                                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                                 
-                                label = f"{class_name} #{track_id}"
+                                speed_label = f" {int(speed_kmh)} km/h" if speed_kmh > 2 else ""
+                                label = f"{class_name} #{track_id}{speed_label}"
                                 (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
                                 cv2.rectangle(frame, (x1, y1 - 20), (x1 + w, y1), color, -1)
                                 b, g, r = color
@@ -248,40 +285,50 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                                 text_color = (0, 0, 0) if brightness > 140 else (255, 255, 255)
                                 cv2.putText(frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 1)
                     
-                    _, buffer = cv2.imencode('.jpg', frame, encode_params)
-                    frame_bytes = buffer.tobytes()
+                    try:
+                        _, buffer = cv2.imencode('.jpg', frame, encode_params)
+                        frame_bytes = buffer.tobytes()
+                    except Exception as enc_err:
+                        print(f"Job {job_id}: Frame encoding failed: {enc_err}")
+                        continue
                     
                     processed_frames = min(total_frames, (frame_idx + 1) * frame_skip)
                     progress = int((processed_frames / total_frames) * 100) if total_frames > 0 else 0
                     inf_ms = int((time.time() - t_start) * 1000)
+                    
+                    # Global avg speed for this frame
+                    avg_speed = sum(current_speeds)/len(current_speeds) if current_speeds else 0
 
-                    asyncio.run_coroutine_threadsafe(
-                        frame_queue.put({
-                            "type": "metadata",
-                            "progress": progress,
-                            "current_counts": dict(current_frame_counts),
-                            "cumulative_counts": dict(class_counts),
-                            "status": "processing",
-                            "target_fps": target_fps,
-                            "inference_time": inf_ms
-                        }),
-                        loop
-                    )
-                    asyncio.run_coroutine_threadsafe(
-                        frame_queue.put({"type": "frame", "data": frame_bytes}),
-                        loop
-                    )
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            frame_queue.put({
+                                "type": "metadata",
+                                "progress": progress,
+                                "current_counts": dict(current_frame_counts),
+                                "cumulative_counts": dict(class_counts),
+                                "avg_speed": round(avg_speed, 1),
+                                "status": "processing",
+                                "target_fps": target_fps,
+                                "inference_time": inf_ms
+                            }),
+                            loop
+                        )
+                        asyncio.run_coroutine_threadsafe(
+                            frame_queue.put({"type": "frame", "data": frame_bytes}),
+                            loop
+                        )
+                    except Exception as q_err:
+                        print(f"Job {job_id}: Queue put failed: {q_err}")
 
                     if stop_event.is_set():
                         break
                 
                 # Signal completion with final unique counts
-                final_counts = Counter(unique_objects.values())
                 if not stop_event.is_set():
                     asyncio.run_coroutine_threadsafe(
                         frame_queue.put({
                             "status": "completed",
-                            "counts": dict(final_counts)
+                            "counts": dict(class_counts)
                         }),
                         loop
                     )
@@ -296,38 +343,48 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         # Start processing in background thread
         detection_future = loop.run_in_executor(executor, process_video_stream)
         
-        # Stream frames as they arrive in the queue
-        while True:
-            frame_data = await frame_queue.get()
-            
-            # Check for errors
-            if "error" in frame_data:
-                try:
-                    async with ws_lock:
-                        await websocket.send_json({"error": frame_data["error"]})
-                except:
-                    pass
-                break
-            
-            # Check if completed
-            if frame_data.get("status") == "completed":
-                try:
-                    async with ws_lock:
-                        await websocket.send_json(frame_data)
-                except:
-                    pass
-                break
-            
-            # Send data based on type
+        async def receiver():
             try:
-                async with ws_lock:
-                    if frame_data.get("type") == "metadata":
-                        await websocket.send_json(frame_data)
-                    elif frame_data.get("type") == "frame":
-                        await websocket.send_bytes(frame_data["data"])
-            except Exception as send_err:
-                print(f"Error sending data for job {job_id}: {send_err}")
-                break
+                while True:
+                    data = await websocket.receive_json()
+                    if data.get("type") == "filter_update":
+                        new_filters = data.get("filter_classes", [])
+                        job["filter_classes"] = new_filters
+                        print(f"Job {job_id}: Updated filters to {new_filters}")
+            except WebSocketDisconnect:
+                stop_event.set()
+            except Exception as e:
+                print(f"Receiver error: {e}")
+
+        async def sender():
+            while not stop_event.is_set():
+                try:
+                    frame_data = await frame_queue.get()
+                    
+                    if "error" in frame_data:
+                        print(f"Job {job_id}: Sender received error from queue: {frame_data['error']}")
+                        try: await websocket.send_json({"error": frame_data["error"]})
+                        except: pass
+                        break
+                    
+                    if frame_data.get("status") == "completed":
+                        print(f"Job {job_id}: Sender received completion signal")
+                        try: await websocket.send_json(frame_data)
+                        except: pass
+                        break
+                    
+                    async with ws_lock:
+                        if frame_data.get("type") == "metadata":
+                            await websocket.send_json(frame_data)
+                        elif frame_data.get("type") == "frame":
+                            await websocket.send_bytes(frame_data["data"])
+                except Exception as send_err:
+                    print(f"Job {job_id}: Sender error: {send_err}")
+                    break
+            stop_event.set()
+
+        # Run both concurrently
+        await asyncio.gather(receiver(), sender())
 
     except WebSocketDisconnect:
         stop_event.set()
