@@ -1,193 +1,291 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Traffic Analytics</title>
+    <title>Traffic Intelligence Command Center</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        :root { --primary-blue: #0d6efd; }
-        body { background-color: #f0f2f5; font-family: 'Segoe UI', system-ui, sans-serif; }
-        .main-container { max-width: 1600px; margin: 20px auto; padding: 0 20px; }
-        
-        /* Stream Container - Video + Analytics Side by Side */
-        .stream-container { 
-            display: flex; 
-            gap: 20px; 
-            margin-bottom: 20px; 
-            background: white; 
-            border-radius: 12px; 
-            padding: 20px; 
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1); 
-        }
-        
-        /* Video Section - Fixed Size */
-        .video-section { 
-            flex-shrink: 0; 
-            width: 640px; 
-        }
-        .video-card { 
-            background: white; 
-            border-radius: 8px; 
-            overflow: hidden; 
-            border: 2px solid #e0e0e0; 
-        }
-        .video-container { 
-            background: #000; 
-            width: 640px; 
-            height: 360px; 
-            position: relative; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-        }
-        .live-frame { 
-            width: 640px; 
-            height: 360px; 
-            object-fit: contain; 
-        }
-        
-        /* Analytics Section - Flexible */
-        .analytics-section { 
-            flex: 1; 
-            display: flex; 
-            flex-direction: column; 
-        }
-        .stats-card { 
-            background: #f8f9fa; 
-            border-radius: 8px; 
-            padding: 15px; 
-            height: 100%; 
-            display: flex; 
-            flex-direction: column; 
-        }
-        .stats-list { 
-            flex: 1; 
-            overflow-y: auto; 
-            font-size: 0.85rem; 
-            margin-top: 10px; 
-        }
-        .count-item { 
-            display: flex; 
-            justify-content: space-between; 
-            padding: 5px 10px; 
-            margin-bottom: 5px; 
-            background: white; 
-            border-left: 3px solid var(--primary-blue); 
-            border-radius: 4px; 
+        :root {
+            --bg-body: #0f172a;
+            --bg-gradient: radial-gradient(circle at 50% 0%, #1e293b 0%, #0f172a 100%);
+            --card-bg: rgba(30, 41, 59, 0.7);
+            --navbar-bg: rgba(15, 23, 42, 0.8);
+            --accent-blue: #38bdf8;
+            --accent-emerald: #10b981;
+            --accent-rose: #f43f5e;
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --border-color: rgba(255, 255, 255, 0.1);
+            --input-bg: #1e293b;
+            --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
         }
 
-        /* Upload area */
-        .upload-bar { 
-            background: white; 
-            border-radius: 12px; 
-            padding: 15px; 
-            margin-bottom: 20px; 
-            display: flex; 
-            align-items: center; 
-            gap: 15px; 
+        [data-theme="light"] {
+            --bg-body: #f8fafc;
+            --bg-gradient: radial-gradient(circle at 50% 0%, #f1f5f9 0%, #f8fafc 100%);
+            --card-bg: rgba(255, 255, 255, 0.8);
+            --navbar-bg: rgba(255, 255, 255, 0.9);
+            --accent-blue: #0284c7;
+            --accent-emerald: #059669;
+            --accent-rose: #dc2626;
+            --text-main: #1e293b;
+            --text-muted: #64748b;
+            --border-color: rgba(0, 0, 0, 0.1);
+            --input-bg: #ffffff;
+            --shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
         }
-        
-        .hidden { display: none !important; }
-        .progress { height: 6px; }
-        .overlay { 
-            position: absolute; 
-            background: rgba(0,0,0,0.6); 
-            color: white; 
-            padding: 5px 12px; 
-            border-radius: 20px; 
-            font-size: 0.8rem; 
-            top: 10px; 
-            right: 10px; 
+
+        body {
+            background-color: var(--bg-body);
+            background-image: var(--bg-gradient);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+            margin: 0;
+            overflow-x: hidden;
+            transition: background 0.3s, color 0.3s;
         }
-        
-        /* Class Filter Styles */
-        .filter-section {
-            background: white;
-            border-radius: 12px;
-            padding: 15px;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+
+        .glass-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            box-shadow: var(--shadow);
+            transition: transform 0.3s ease, background 0.3s, border 0.3s;
         }
-        .class-filters {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-top: 10px;
+
+        .navbar {
+            background: var(--navbar-bg);
+            backdrop-filter: blur(8px);
+            border-bottom: 1px solid var(--border-color);
+            padding: 0.75rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
         }
-        .class-guide {
-            margin-top: 8px;
-            margin-bottom: 0;
-            font-size: 0.85rem;
-            color: #6c757d;
+
+        .brand-logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(to right, var(--accent-blue), var(--accent-emerald));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -1px;
         }
-        .filter-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 12px;
-            flex-wrap: wrap;
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            gap: 1.5rem;
+            padding: 1.5rem;
+            max-width: 1800px;
+            margin: 0 auto;
         }
-        .filter-actions {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-        }
-        .class-checkbox {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            padding: 5px 12px;
-            background: #f8f9fa;
-            border-radius: 20px;
-            border: 2px solid #e0e0e0;
+
+        /* Theme Switcher */
+        .theme-toggle {
             cursor: pointer;
-            transition: all 0.2s;
-        }
-        .class-checkbox:hover {
-            border-color: var(--primary-blue);
-            background: #e7f3ff;
-        }
-        .class-checkbox input[type="checkbox"] {
-            cursor: pointer;
-        }
-        .class-checkbox.checked {
-            background: var(--primary-blue);
-            color: white;
-            border-color: var(--primary-blue);
-        }
-
-        .demo-section {
-            background: white;
+            width: 48px;
+            height: 24px;
+            background: #cbd5e1;
             border-radius: 12px;
-            padding: 15px;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            position: relative;
+            transition: background 0.3s;
+            display: flex;
+            align-items: center;
+            padding: 0 4px;
+        }
+        [data-theme="dark"] .theme-toggle {
+            background: var(--accent-blue);
+        }
+        .theme-toggle::after {
+            content: '';
+            width: 18px;
+            height: 18px;
+            background: white;
+            border-radius: 50%;
+            position: absolute;
+            left: 3px;
+            transition: transform 0.3s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        [data-theme="dark"] .theme-toggle::after {
+            transform: translateX(24px);
         }
 
-        .demo-video {
-            width: 100%;
-            max-width: 800px;
-            border-radius: 10px;
-            background: #000;
+        /* Sidebar Controls */
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .control-group {
+            padding: 1.25rem;
+        }
+
+        .control-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 1rem;
             display: block;
+            font-weight: 600;
         }
-        #demoBtn {
-            background: linear-gradient(135deg, #22c55e, #16a34a);
-            color: #fff;
+
+        .btn-glow-primary {
+            background: var(--accent-blue);
+            color: white;
             border: none;
             font-weight: 600;
-            box-shadow: 0 6px 14px rgba(34, 197, 94, 0.35);
+            padding: 0.6rem 1rem;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(56, 189, 248, 0.3);
+            transition: all 0.2s;
         }
-        #demoBtn:hover {
-            background: linear-gradient(135deg, #16a34a, #15803d);
-            color: #fff;
-            transform: translateY(-1px);
+        .btn-glow-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 0 20px rgba(56, 189, 248, 0.5);
+            opacity: 0.9;
+            color: white;
         }
-        
-        /* Video Modal Styles */
+
+        .btn-outline-custom {
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+            transition: all 0.2s;
+        }
+        .btn-outline-custom:hover {
+            background: rgba(255,255,255,0.1);
+            color: var(--accent-blue);
+            border-color: var(--accent-blue);
+        }
+
+        /* KPI Cards */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        .kpi-card {
+            padding: 1rem;
+            text-align: center;
+        }
+        .kpi-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin: 0.25rem 0;
+            color: var(--accent-blue);
+        }
+        .kpi-label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        /* Stream Display */
+        .stream-layout {
+            display: grid;
+            grid-template-columns: 1fr 380px;
+            gap: 1.5rem;
+        }
+        .video-wrapper {
+            position: relative;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+            aspect-ratio: 16/9;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .video-wrapper:hover {
+            opacity: 0.95;
+        }
+        .live-badge {
+            position: absolute;
+            top: 1rem;
+            left: 1rem;
+            background: rgba(244, 63, 94, 0.8);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            animation: pulse 2s infinite;
+            z-index: 10;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.6; }
+            100% { opacity: 1; }
+        }
+
+        .stat-pill {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(4px);
+            padding: 0.4rem 0.8rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            border: 1px solid var(--border-color);
+            color: white;
+        }
+
+        /* Classes Filter */
+        .class-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.4rem 0.8rem;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 0.25rem;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .class-tag:hover {
+            border-color: var(--accent-blue);
+        }
+        .class-tag.active {
+            background: rgba(56, 189, 248, 0.2);
+            border-color: var(--accent-blue);
+            color: var(--accent-blue);
+        }
+        .class-tag input {
+            display: none;
+        }
+
+        /* Progress Bar */
+        .custom-progress {
+            height: 4px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 2px;
+            margin-top: 1rem;
+        }
+        .progress-fill {
+            height: 100%;
+            background: var(--accent-blue);
+            width: 0%;
+            transition: width 0.3s ease;
+            box-shadow: 0 0 10px var(--accent-blue);
+        }
+
+        /* Modal Enhancement */
         .video-modal {
             display: none;
             position: fixed;
@@ -195,156 +293,147 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.9);
-            z-index: 10000;
-            cursor: pointer;
-        }
-        .video-modal.active {
-            display: flex;
+            background: rgba(15, 23, 42, 0.95);
+            z-index: 9999;
             align-items: center;
             justify-content: center;
+            cursor: zoom-out;
         }
-        .modal-video {
+        .video-modal img {
             max-width: 90vw;
             max-height: 90vh;
-            object-fit: contain;
-            border-radius: 8px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-        }
-        .modal-close {
-            position: absolute;
-            top: 20px;
-            right: 30px;
-            color: white;
-            font-size: 40px;
-            font-weight: bold;
-            cursor: pointer;
-            z-index: 10001;
-        }
-        .modal-close:hover {
-            color: #ccc;
-        }
-        .video-container {
-            cursor: zoom-in;
-        }
-        .video-container:hover {
-            opacity: 0.9;
+            border-radius: 12px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
         }
 
-        /* Responsive layout */
-        @media (max-width: 992px) {
-            .main-container {
-                padding: 0 12px;
-                margin: 12px auto;
-            }
-
-            .main-container > header {
-                flex-direction: column;
-                align-items: flex-start !important;
-                gap: 12px;
-            }
-
-            .upload-bar {
-                width: 100%;
-                flex-wrap: wrap;
-            }
-
-            .upload-bar input[type="file"] {
-                width: 100% !important;
-                min-width: 220px;
-            }
-            .filter-actions {
-                width: 100%;
-                justify-content: flex-start;
-            }
-
-            .stream-container {
-                flex-direction: column;
-                padding: 12px;
-                gap: 12px;
-            }
-
-            .video-section,
-            .analytics-section {
-                width: 100%;
-                flex: 1 1 auto;
-            }
-
-            .video-container,
-            .live-frame {
-                width: 100%;
-                height: auto;
-                aspect-ratio: 16 / 9;
-            }
-
-            .stats-card {
-                min-height: 260px;
-            }
+        #streamsContainer {
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
         }
 
-        @media (max-width: 576px) {
-            .class-filters {
-                gap: 6px;
-            }
+        .hidden { display: none !important; }
 
-            .class-checkbox {
-                padding: 4px 10px;
-                font-size: 0.8rem;
-            }
-
-            .overlay {
-                font-size: 0.72rem;
-                padding: 4px 8px;
-            }
-            .filter-actions .btn {
-                flex: 1;
-            }
+        @media (max-width: 1200px) {
+            .main-grid { grid-template-columns: 1fr; }
+            .sidebar { order: 2; }
+            .stream-layout { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
 
-<div class="main-container">
-    <header class="d-flex justify-content-between align-items-center mb-3">
-        <div>
-            <h3 class="fw-bold mb-0 text-dark"><i class="fas fa-microchip text-primary me-2"></i>Traffic AI</h3>
-            <p class="text-muted small mb-0">Real-time Traffic Detection & Tracking</p>
+<nav class="navbar">
+    <div class="container-fluid d-flex justify-content-between align-items-center">
+        <div class="brand-logo">
+            <i class="fas fa-radar me-2"></i>TRAFFIC INTEL v2.0
         </div>
-        <div class="upload-bar shadow-sm">
-            <span class="small text-muted">Upload video(s):</span>
-            <input type="file" id="videoInput" class="form-control form-control-sm" style="width: 250px;" multiple accept="video/*">
-            <button class="btn btn-primary btn-sm" id="startBtn">Start Analysis</button>
-            <button class="btn btn-outline-success btn-sm" id="demoBtn">See Demo</button>
-        </div>
-    </header>
-
-    <!-- Class Filter Section -->
-    <div class="filter-section">
-        <div class="filter-header">
-            <h6 class="fw-bold mb-0"><i class="fas fa-filter me-2"></i>Filter Object Classes</h6>
-            <div class="filter-actions">
-                <button class="btn btn-sm btn-outline-primary" id="selectAllBtn">Select All</button>
-                <button class="btn btn-sm btn-outline-secondary" id="deselectAllBtn">Deselect All</button>
+        <div class="d-flex gap-4 align-items-center">
+            <div class="d-flex align-items-center gap-2">
+                <i class="fas fa-sun small text-muted"></i>
+                <div class="theme-toggle" id="themeToggle"></div>
+                <i class="fas fa-moon small text-muted"></i>
+            </div>
+            <div id="global-status" class="small text-muted d-none d-md-block">
+                <span class="badge bg-success me-2">System Online</span>
+                <span id="active-jobs-count">0 active jobs</span>
+            </div>
+            <div class="border-start ps-3 border-secondary">
+                <button class="btn btn-sm btn-glow-primary" id="demoBtn">
+                    <i class="fas fa-play me-2"></i>Live Demo
+                </button>
             </div>
         </div>
-        <p class="class-guide">
-            <i class="fas fa-info-circle me-1"></i>
-            Please select class(es) first, then click <strong>See Demo</strong> or <strong>Start Analysis</strong>.
-        </p>
-        <div class="class-filters" id="classFilters"></div>
     </div>
+</nav>
 
-    <!-- Dynamic Stream Containers -->
-    <div id="streamsContainer"></div>
+<div class="main-grid">
+    <!-- Sidebar Controls -->
+    <aside class="sidebar">
+        <div class="glass-card control-group">
+            <span class="control-label">Data Ingestion</span>
+            <div class="mb-3">
+                <input type="file" id="videoInput" class="form-control form-control-sm bg-transparent text-inherit border-secondary" multiple accept="video/*">
+            </div>
+            <button class="btn btn-glow-primary w-100 mb-3" id="startBtn">
+                <i class="fas fa-microchip me-2"></i>Initialize Analysis
+            </button>
+            <div class="small text-muted">
+                <i class="fas fa-info-circle me-1"></i> Multi-video upload supported.
+            </div>
+        </div>
+
+        <div class="glass-card control-group">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <span class="control-label mb-0">Class Filters</span>
+                <div class="btn-group">
+                    <button class="btn btn-xs text-muted p-0 me-2" id="selectAllBtn" style="font-size: 0.7rem;">ALL</button>
+                    <button class="btn btn-xs text-muted p-0" id="deselectAllBtn" style="font-size: 0.7rem;">NONE</button>
+                </div>
+            </div>
+            <div class="d-flex flex-wrap" id="classFilters"></div>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="content-area">
+        <!-- Dashboard Summary -->
+        <div class="kpi-grid" id="global-kpis">
+            <div class="glass-card kpi-card">
+                <div class="kpi-label">Vehicles Tracked</div>
+                <div class="kpi-value" id="total-tracked">0</div>
+            </div>
+            <div class="glass-card kpi-card">
+                <div class="kpi-label">Peak Intensity</div>
+                <div class="kpi-value" id="peak-intensity">0</div>
+            </div>
+            <div class="glass-card kpi-card">
+                <div class="kpi-label">Avg Processing</div>
+                <div class="kpi-value" id="avg-latency">--ms</div>
+            </div>
+            <div class="glass-card kpi-card">
+                <div class="kpi-label">Active Sockets</div>
+                <div class="kpi-value" id="active-sockets-val">0</div>
+            </div>
+        </div>
+
+        <div id="streamsContainer">
+             <div class="glass-card p-5 text-center text-muted" id="empty-state">
+                <i class="fas fa-chart-network fa-4x mb-4 opacity-25"></i>
+                <h5>Waiting for Input Data</h5>
+                <p>Upload a video or initialize the Live Demo to begin gathering traffic intelligence.</p>
+             </div>
+        </div>
+    </main>
 </div>
 
-<!-- Video Enlarge Modal -->
 <div class="video-modal" id="videoModal">
-    <div class="modal-close" id="modalClose">&times;</div>
-    <img class="modal-video" id="modalVideo" src="" alt="Enlarged Video">
+    <div class="position-absolute top-0 end-0 p-4">
+        <button class="btn btn-outline-custom border-white text-white" id="modalClose"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="container text-center">
+        <img id="modalVideo" src="" alt="Enlarged Feed">
+    </div>
 </div>
 
 <script>
+    // State Management
+    let charts = [];
+    let temporalCharts = [];
+    let activeJobs = [];
+    let availableClasses = [];
+    let activeSockets = [];
+    let activeModalSlot = null; // Track which slot is being viewed in modal
+    let globalStats = {
+        totalObjects: 0,
+        peakObjects: 0,
+        totalInferenceTime: 0,
+        inferenceCount: 0,
+        startTime: null
+    };
+
+    // UI Elements
+    const themeToggle = document.getElementById('themeToggle');
     const videoInput = document.getElementById('videoInput');
     const startBtn = document.getElementById('startBtn');
     const demoBtn = document.getElementById('demoBtn');
@@ -352,457 +441,295 @@
     const classFilters = document.getElementById('classFilters');
     const selectAllBtn = document.getElementById('selectAllBtn');
     const deselectAllBtn = document.getElementById('deselectAllBtn');
-    
-    // Modal elements
+    const emptyState = document.getElementById('empty-state');
     const videoModal = document.getElementById('videoModal');
     const modalVideo = document.getElementById('modalVideo');
     const modalClose = document.getElementById('modalClose');
-    
-    let charts = [];
-    let activeJobs = [];
-    let availableClasses = [];
-    let activeSockets = [];
 
-    function closeExistingConnections() {
-        activeJobs = activeJobs.map(() => false);
-        activeSockets.forEach((s) => {
-            try {
-                if (s && s.readyState === WebSocket.OPEN) s.close(1000, "New stream started");
-            } catch (_) {}
-        });
-        activeSockets = [];
-    }
+    // Theme Logic
+    themeToggle.onclick = () => {
+        const current = document.documentElement.getAttribute('data-theme');
+        const next = current === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('theme', next);
+        updateChartThemes(next);
+    };
 
-    function registerSocket(socket) {
-        activeSockets.push(socket);
-    }
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
 
-    function unregisterSocket(socket) {
-        activeSockets = activeSockets.filter((s) => s !== socket);
-    }
-
-    // Modal functionality
-    function setupVideoModal() {
-        // Close modal when clicking close button
-        modalClose.onclick = closeModal;
+    function updateChartThemes(theme) {
+        const textColor = theme === 'dark' ? '#94a3b8' : '#64748b';
+        const gridColor = theme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
         
-        // Close modal when clicking outside video
-        videoModal.onclick = function(e) {
-            if (e.target === videoModal) {
-                closeModal();
+        charts.forEach(chart => {
+            if (chart) {
+                chart.options.scales.x.ticks.color = textColor;
+                chart.options.scales.y.ticks.color = textColor;
+                chart.update();
             }
-        };
-        
-        // Close modal with Escape key
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape' && videoModal.classList.contains('active')) {
-                closeModal();
+        });
+        temporalCharts.forEach(chart => {
+            if (chart) {
+                chart.options.scales.y.ticks.color = textColor;
+                chart.options.scales.y.grid.color = gridColor;
+                chart.update();
             }
         });
     }
-    
-    // Track which slot is currently enlarged
-    let enlargedSlotIndex = null;
-    
-    function openModal(slotIndex) {
-        enlargedSlotIndex = slotIndex;
-        const frame = document.getElementById(`frame-${slotIndex}`);
-        if (frame && frame.src) {
-            modalVideo.src = frame.src;
-        }
-        videoModal.classList.add('active');
-        document.body.style.overflow = 'hidden';
-    }
-    
-    function closeModal() {
-        enlargedSlotIndex = null;
-        videoModal.classList.remove('active');
-        modalVideo.src = '';
-        document.body.style.overflow = '';
-    }
-    
-    // Update modal if it's showing this slot's video
-    function updateModalIfActive(slotIndex, src) {
-        if (enlargedSlotIndex === slotIndex && videoModal.classList.contains('active')) {
-            modalVideo.src = src;
-        }
-    }
-    
-    // Add click event to video containers
-    function addVideoClickListener(slotIndex) {
-        const container = document.getElementById(`container-${slotIndex}`);
-        const frame = document.getElementById(`frame-${slotIndex}`);
-        
-        container.onclick = function() {
-            if (frame.src && !frame.classList.contains('hidden')) {
-                openModal(slotIndex);
-            }
-        };
+
+    async function init() {
+        await loadClasses();
+        setupModal();
     }
 
-    // Load available classes on page load
     async function loadClasses() {
         try {
             const response = await fetch('/classes');
             const data = await response.json();
             availableClasses = data.classes;
             renderClassFilters();
-        } catch (err) {
-            console.error('Failed to load classes:', err);
-        }
+        } catch (err) { console.error(err); }
     }
 
     function renderClassFilters() {
         classFilters.innerHTML = '';
         availableClasses.forEach(className => {
             const label = document.createElement('label');
-            label.className = 'class-checkbox checked';
+            label.className = 'class-tag active';
             label.innerHTML = `
                 <input type="checkbox" name="class" value="${className}" checked>
+                <i class="fas fa-circle-dot small opacity-50"></i>
                 <span>${className}</span>
             `;
-            
             const checkbox = label.querySelector('input');
-            checkbox.addEventListener('change', function() {
-                if (this.checked) {
-                    label.classList.add('checked');
-                } else {
-                    label.classList.remove('checked');
-                }
-            });
-            
+            checkbox.addEventListener('change', () => label.classList.toggle('active', checkbox.checked));
             classFilters.appendChild(label);
         });
     }
 
-    selectAllBtn.onclick = () => {
-        document.querySelectorAll('.class-checkbox input').forEach(cb => {
-            cb.checked = true;
-            cb.closest('.class-checkbox').classList.add('checked');
-        });
-    };
-
-    deselectAllBtn.onclick = () => {
-        document.querySelectorAll('.class-checkbox input').forEach(cb => {
-            cb.checked = false;
-            cb.closest('.class-checkbox').classList.remove('checked');
-        });
-    };
-
-    function getSelectedClasses() {
-        const selected = Array.from(document.querySelectorAll('.class-checkbox input:checked'))
-            .map(cb => cb.value);
-        return selected.length > 0 ? selected.join(',') : 'all';
+    function setupModal() {
+        modalClose.onclick = () => { activeModalSlot = null; videoModal.style.display = 'none'; };
+        videoModal.onclick = (e) => { if(e.target === videoModal) { activeModalSlot = null; videoModal.style.display = 'none'; } };
     }
 
-    startBtn.onclick = async () => {
+    function getSelectedClasses() {
+        return Array.from(document.querySelectorAll('.class-tag input:checked')).map(cb => cb.value).join(',') || 'all';
+    }
+
+    startBtn.onclick = () => {
         const files = videoInput.files;
-        if (files.length === 0) return alert('Please select at least one video.');
+        if (files.length === 0) return alert('Select videos.');
+        processJobs(files, 'upload');
+    };
+
+    demoBtn.onclick = () => processJobs([null], 'demo');
+
+    selectAllBtn.onclick = () => document.querySelectorAll('.class-tag input').forEach(cb => { cb.checked = true; cb.parentElement.classList.add('active'); });
+    deselectAllBtn.onclick = () => document.querySelectorAll('.class-tag input').forEach(cb => { cb.checked = false; cb.parentElement.classList.remove('active'); });
+
+    function processJobs(items, type) {
+        closeExistingConnections();
+        activeModalSlot = null;
+        streamsContainer.innerHTML = '';
+        emptyState.classList.add('hidden');
+        charts = []; temporalCharts = []; activeJobs = [];
+        globalStats = { totalObjects: 0, peakObjects: 0, totalInferenceTime: 0, inferenceCount: 0, startTime: Date.now() };
         
         const selectedClasses = getSelectedClasses();
-        if (selectedClasses === 'all' || selectedClasses === '') {
-            return alert('Please select at least one class to detect.');
-        }
-        
-        // Close previous streams and clear UI
-        closeExistingConnections();
-        streamsContainer.innerHTML = '';
-        charts = [];
-        activeJobs = [];
-        
-        // Create and start stream for each video
-        for (let i = 0; i < files.length; i++) {
+
+        Array.from(items).forEach((item, i) => {
             createStreamSlot(i);
-            addVideoClickListener(i); // Add click listener for modal
             activeJobs.push(false);
-            charts.push(null);
-            runSlot(i, files[i], selectedClasses);
-        }
-    };
+            if (type === 'upload') runSlot(i, item, selectedClasses);
+            else runDemoSlot(i, selectedClasses);
+        });
+    }
 
-    demoBtn.onclick = async () => {
-        const selectedClasses = getSelectedClasses();
-        if (selectedClasses === 'all' || selectedClasses === '') {
-            return alert('Please select at least one class to detect.');
-        }
-
-        closeExistingConnections();
-        streamsContainer.innerHTML = '';
-        charts = [];
-        activeJobs = [];
-
-        createStreamSlot(0);
-        addVideoClickListener(0);
-        activeJobs.push(false);
-        charts.push(null);
-        runDemoSlot(0, selectedClasses);
-    };
-
-    // Load classes and setup modal when page loads
-    loadClasses();
-    setupVideoModal();
-
-    function createStreamSlot(slotIndex) {
-        const streamHTML = `
-            <div class="stream-container">
-                <!-- Video Section -->
-                <div class="video-section">
-                    <div class="video-card">
-                        <div class="video-container" id="container-${slotIndex}">
-                            <img id="frame-${slotIndex}" class="live-frame hidden">
-                            <div id="placeholder-${slotIndex}" class="text-muted small"><i class="fas fa-video fa-2x mb-2"></i><br>Stream ${slotIndex + 1} Ready</div>
-                            <div id="overlay-${slotIndex}" class="overlay hidden">0%</div>
-                            <div class="position-absolute" style="bottom: 10px; left: 10px; color: rgba(255,255,255,0.7); font-size: 12px;">
-                                <i class="fas fa-expand-alt me-1"></i>Click to enlarge
-                            </div>
+    function createStreamSlot(idx) {
+        const html = `
+            <div class="glass-card p-4 stream-layout mb-4" id="stream-slot-${idx}">
+                <div>
+                    <div class="video-wrapper mb-3" id="container-${idx}">
+                        <div class="live-badge" id="badge-${idx}">
+                            <i class="fas fa-circle"></i> LIVE FEED
                         </div>
-                        <div class="p-2 border-top">
-                            <div class="progress mb-1"><div id="bar-${slotIndex}" class="progress-bar" style="width: 0%"></div></div>
-                            <div class="d-flex justify-content-between small"><span id="name-${slotIndex}" class="text-truncate" style="max-width: 400px;">---</span><span id="status-${slotIndex}" class="badge bg-secondary">Idle</span></div>
+                        <img id="frame-${idx}" class="w-100 h-100" style="object-fit: contain;">
+                        <div class="position-absolute bottom-0 end-0 p-3">
+                            <div class="stat-pill"><i class="fas fa-buffer me-1"></i><span id="buffer-${idx}">0</span></div>
                         </div>
                     </div>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div class="small text-truncate" style="max-width: 200px;"><span class="text-muted">Source:</span> <span id="name-${idx}">Initializing...</span></div>
+                        <div id="status-${idx}" class="badge bg-secondary">Waiting</div>
+                    </div>
+                    <div class="custom-progress"><div class="progress-fill" id="bar-${idx}"></div></div>
                 </div>
-                
-                <!-- Analytics Section -->
-                <div class="analytics-section">
-                    <div class="stats-card">
-                        <h6 class="fw-bold border-bottom pb-2 mb-2"><i class="fas fa-chart-bar me-2"></i>Stream ${slotIndex + 1} Analytics</h6>
-                        <canvas id="chart-${slotIndex}" height="120"></canvas>
-                        <div class="stats-list" id="list-${slotIndex}"></div>
-                    </div>
+                <div class="d-flex flex-column gap-3">
+                    <div class="glass-card p-3 flex-grow-1"><span class="control-label mb-2">Live Density</span><div style="height: 180px;"><canvas id="chart-${idx}"></canvas></div></div>
+                    <div class="glass-card p-3"><span class="control-label mb-2">Temporal Trend</span><div style="height: 140px;"><canvas id="temporal-${idx}"></canvas></div></div>
                 </div>
             </div>
         `;
-        streamsContainer.insertAdjacentHTML('beforeend', streamHTML);
+        streamsContainer.insertAdjacentHTML('beforeend', html);
+        document.getElementById(`container-${idx}`).onclick = () => {
+            const src = document.getElementById(`frame-${idx}`).src;
+            if(src) { 
+                activeModalSlot = idx;
+                modalVideo.src = src; 
+                videoModal.style.display = 'flex'; 
+            }
+        };
     }
 
-    async function runSlot(slotIndex, file, selectedClasses) {
-        if (activeJobs[slotIndex]) return;
-        activeJobs[slotIndex] = true;
-
-        // Reset UI for slot
-        const frame = document.getElementById(`frame-${slotIndex}`);
-        const placeholder = document.getElementById(`placeholder-${slotIndex}`);
-        const bar = document.getElementById(`bar-${slotIndex}`);
-        const nameLabel = document.getElementById(`name-${slotIndex}`);
-        const statusBadge = document.getElementById(`status-${slotIndex}`);
-        const overlay = document.getElementById(`overlay-${slotIndex}`);
-        const listContainer = document.getElementById(`list-${slotIndex}`);
-
-        nameLabel.innerText = file.name;
-        statusBadge.innerText = 'Uploading...';
-        statusBadge.className = 'badge bg-warning text-dark';
-        placeholder.classList.add('hidden');
-        frame.classList.remove('hidden');
-        overlay.classList.remove('hidden');
-
-        // Frame queue for continuous playback
-        const frameQueue = [];
-        let isPlaying = false;
-        let targetFps = 15;  // Default, will be updated from server
-        let frameDelay = 1000 / targetFps;
-
-        // Continuous frame player - plays at target FPS
-        async function playFrames() {
-            if (isPlaying) return;
-            isPlaying = true;
-
-            while (frameQueue.length > 0 || activeJobs[slotIndex]) {
-                if (frameQueue.length > 0) {
-                    const frameData = frameQueue.shift();
-                    const imgSrc = "data:image/jpeg;base64," + frameData.frame;
-                    frame.src = imgSrc;
-                    bar.style.width = frameData.progress + '%';
-                    overlay.innerText = frameData.progress + '% | Buffer: ' + frameQueue.length;
-                    updateAnalytics(slotIndex, frameData.counts);
-                    
-                    // Update modal if this slot is enlarged
-                    updateModalIfActive(slotIndex, imgSrc);
-                    
-                    await new Promise(resolve => setTimeout(resolve, frameDelay));
-                } else {
-                    // Wait for more frames (short wait)
-                    await new Promise(resolve => setTimeout(resolve, 50));
-                }
-            }
-            isPlaying = false;
-        }
-
-        // Upload with selected classes
+    async function runSlot(idx, file, selectedClasses) {
         const formData = new FormData();
         formData.append('video', file);
         formData.append('selected_classes', selectedClasses);
-        
         try {
-            const response = await fetch('/upload', { method: 'POST', body: formData });
-            const data = await response.json();
-            
-            // Connect WebSocket
-            statusBadge.innerText = 'Tracking';
-            statusBadge.className = 'badge bg-primary';
-            
-            const ws_protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const socket = new WebSocket(`${ws_protocol}//${window.location.host}/ws/${data.job_id}`);
-            registerSocket(socket);
-
-            socket.onmessage = (event) => {
-                const msg = JSON.parse(event.data);
-                
-                if (msg.status === 'processing' && msg.frame) {
-                    if (msg.target_fps) {
-                        targetFps = msg.target_fps;
-                        frameDelay = 1000 / targetFps;
-                    }
-                    frameQueue.push(msg);
-                    if (!isPlaying) {
-                        playFrames();
-                    }
-                } else if (msg.status === 'completed') {
-                    statusBadge.innerText = 'Done';
-                    statusBadge.className = 'badge bg-success';
-                    if (msg.counts) updateAnalytics(slotIndex, msg.counts);
-                    socket.close();
-                }
-            };
-
-            socket.onclose = () => {
-                unregisterSocket(socket);
-                activeJobs[slotIndex] = false;
-                overlay.classList.add('hidden');
-            };
-
-        } catch (err) {
-            statusBadge.innerText = 'Error';
-            statusBadge.className = 'badge bg-danger';
-            activeJobs[slotIndex] = false;
-        }
+            const res = await fetch('/upload', { method: 'POST', body: formData });
+            const data = await res.json();
+            document.getElementById(`name-${idx}`).innerText = file.name;
+            connectWS(idx, data.job_id);
+        } catch (err) { handleError(idx); }
     }
 
-    async function runDemoSlot(slotIndex, selectedClasses) {
-        if (activeJobs[slotIndex]) return;
-        activeJobs[slotIndex] = true;
+    async function runDemoSlot(idx, selectedClasses) {
+        const formData = new FormData();
+        formData.append('selected_classes', selectedClasses);
+        try {
+            const res = await fetch('/demo-job', { method: 'POST', body: formData });
+            const data = await res.json();
+            document.getElementById(`name-${idx}`).innerText = 'City Demo Feed';
+            connectWS(idx, data.job_id);
+        } catch (err) { handleError(idx); }
+    }
 
-        const frame = document.getElementById(`frame-${slotIndex}`);
-        const placeholder = document.getElementById(`placeholder-${slotIndex}`);
-        const bar = document.getElementById(`bar-${slotIndex}`);
-        const nameLabel = document.getElementById(`name-${slotIndex}`);
-        const statusBadge = document.getElementById(`status-${slotIndex}`);
-        const overlay = document.getElementById(`overlay-${slotIndex}`);
 
-        nameLabel.innerText = 'demo.mp4';
-        statusBadge.innerText = 'Preparing demo...';
-        statusBadge.className = 'badge bg-warning text-dark';
-        placeholder.classList.add('hidden');
-        frame.classList.remove('hidden');
-        overlay.classList.remove('hidden');
+    function connectWS(idx, jobId) {
+        const socket = new WebSocket(`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/ws/${jobId}`);
+        activeSockets.push(socket);
+        document.getElementById('active-sockets-val').innerText = activeSockets.length;
 
-        const frameQueue = [];
+        const frame = document.getElementById(`frame-${idx}`);
+        const bar = document.getElementById(`bar-${idx}`);
+        const status = document.getElementById(`status-${idx}`);
+        const bufferSpan = document.getElementById(`buffer-${idx}`);
+        
+        let frameQueue = [];
         let isPlaying = false;
         let targetFps = 15;
-        let frameDelay = 1000 / targetFps;
+        let temporalData = [];
 
-        async function playFrames() {
+        async function play() {
             if (isPlaying) return;
             isPlaying = true;
-
-            while (frameQueue.length > 0 || activeJobs[slotIndex]) {
+            while (frameQueue.length > 0 || socket.readyState === WebSocket.OPEN) {
                 if (frameQueue.length > 0) {
-                    const frameData = frameQueue.shift();
-                    const imgSrc = "data:image/jpeg;base64," + frameData.frame;
-                    frame.src = imgSrc;
-                    bar.style.width = frameData.progress + '%';
-                    overlay.innerText = frameData.progress + '% | Buffer: ' + frameQueue.length;
-                    updateAnalytics(slotIndex, frameData.counts);
-                    updateModalIfActive(slotIndex, imgSrc);
-                    await new Promise(resolve => setTimeout(resolve, frameDelay));
-                } else {
-                    await new Promise(resolve => setTimeout(resolve, 50));
-                }
+                    const data = frameQueue.shift();
+                    const b64 = "data:image/jpeg;base64," + data.frame;
+                    frame.src = b64;
+                    
+                    // Live stream update in modal if active
+                    if (activeModalSlot === idx) {
+                        modalVideo.src = b64;
+                    }
+                    
+                    bar.style.width = data.progress + '%';
+                    bufferSpan.innerText = frameQueue.length;
+                    
+                    if (data.inference_time) {
+                        globalStats.totalInferenceTime += data.inference_time;
+                        globalStats.inferenceCount++;
+                        document.getElementById('avg-latency').innerText = Math.round(globalStats.totalInferenceTime/globalStats.inferenceCount) + 'ms';
+                    }
+                    updateUI(idx, data.counts, temporalData);
+                    await new Promise(r => setTimeout(r, 1000/targetFps));
+                } else await new Promise(r => setTimeout(r, 50));
             }
             isPlaying = false;
         }
 
-        const formData = new FormData();
-        formData.append('selected_classes', selectedClasses);
-
-        try {
-            const response = await fetch('/demo-job', { method: 'POST', body: formData });
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.detail || 'Failed to create demo job');
-
-            nameLabel.innerText = data.video_name || 'demo.mp4';
-            statusBadge.innerText = 'Tracking Demo';
-            statusBadge.className = 'badge bg-primary';
-
-            const ws_protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const socket = new WebSocket(`${ws_protocol}//${window.location.host}/ws/${data.job_id}`);
-            registerSocket(socket);
-
-            socket.onmessage = (event) => {
-                const msg = JSON.parse(event.data);
-
-                if (msg.status === 'processing' && msg.frame) {
-                    if (msg.target_fps) {
-                        targetFps = msg.target_fps;
-                        frameDelay = 1000 / targetFps;
-                    }
-                    frameQueue.push(msg);
-                    if (!isPlaying) playFrames();
-                } else if (msg.status === 'completed') {
-                    statusBadge.innerText = 'Done';
-                    statusBadge.className = 'badge bg-success';
-                    if (msg.counts) updateAnalytics(slotIndex, msg.counts);
-                    socket.close();
-                }
-            };
-
-            socket.onclose = () => {
-                unregisterSocket(socket);
-                activeJobs[slotIndex] = false;
-                overlay.classList.add('hidden');
-            };
-        } catch (err) {
-            statusBadge.innerText = 'Error';
-            statusBadge.className = 'badge bg-danger';
-            activeJobs[slotIndex] = false;
-            alert(`Demo failed: ${err.message || err}`);
-        }
+        socket.onmessage = (e) => {
+            const msg = JSON.parse(e.data);
+            if (msg.status === 'processing' && msg.frame) {
+                status.innerText = 'Analyzing'; status.className = 'badge bg-primary';
+                targetFps = msg.target_fps || 15;
+                frameQueue.push(msg);
+                const total = Object.values(msg.counts).reduce((a,b)=>a+b, 0);
+                temporalData.push(total);
+                if (temporalData.length > 50) temporalData.shift();
+                if (!isPlaying) play();
+            } else if (msg.status === 'completed') {
+                status.innerText = 'Completed'; status.className = 'badge bg-success';
+            }
+        };
+        socket.onclose = () => {
+            activeSockets = activeSockets.filter(s => s !== socket);
+            document.getElementById('active-sockets-val').innerText = activeSockets.length;
+        };
     }
 
-    function updateAnalytics(slot, counts) {
+    function updateUI(idx, counts, temporalData) {
         const labels = Object.keys(counts);
         const values = Object.values(counts);
-        
-        // List update
-        let html = '';
-        labels.forEach(k => {
-            html += `<div class="count-item"><span>${k}</span><span class="text-primary fw-bold">${counts[k]}</span></div>`;
-        });
-        document.getElementById(`list-${slot}`).innerHTML = html;
+        const total = values.reduce((a,b)=>a+b, 0);
 
-        // Chart update
-        if (!charts[slot]) {
-            const ctx = document.getElementById(`chart-${slot}`).getContext('2d');
-            charts[slot] = new Chart(ctx, {
+        globalStats.totalObjects += total / 30;
+        document.getElementById('total-tracked').innerText = Math.floor(globalStats.totalObjects);
+        if (total > globalStats.peakObjects) {
+            globalStats.peakObjects = total;
+            document.getElementById('peak-intensity').innerText = total;
+        }
+
+        const theme = document.documentElement.getAttribute('data-theme');
+        const textColor = theme === 'dark' ? '#94a3b8' : '#64748b';
+
+        if (!charts[idx]) {
+            const ctx = document.getElementById(`chart-${idx}`).getContext('2d');
+            charts[idx] = new Chart(ctx, {
                 type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [{ label: 'Objects', data: values, backgroundColor: '#0d6efd' }]
-                },
-                options: { 
-                    responsive: true, 
-                    indexAxis: 'y',
+                data: { labels, datasets: [{ data: values, backgroundColor: '#38bdf8', borderRadius: 4 }] },
+                options: {
+                    responsive: true, maintainAspectRatio: false, indexAxis: 'y',
                     plugins: { legend: { display: false } },
-                    scales: { x: { beginAtZero: true, grid: { display: false } } },
-                    animation: { duration: 0 }
+                    scales: {
+                        x: { grid: { display: false }, ticks: { color: textColor } },
+                        y: { grid: { display: false }, ticks: { color: textColor } }
+                    }
                 }
             });
         } else {
-            charts[slot].data.labels = labels;
-            charts[slot].data.datasets[0].data = values;
-            charts[slot].update();
+            charts[idx].data.labels = labels;
+            charts[idx].data.datasets[0].data = values;
+            charts[idx].update('none');
+        }
+
+        if (!temporalCharts[idx]) {
+            const ctx = document.getElementById(`temporal-${idx}`).getContext('2d');
+            temporalCharts[idx] = new Chart(ctx, {
+                type: 'line',
+                data: { labels: new Array(temporalData.length).fill(''), datasets: [{ data: temporalData, borderColor: '#10b981', borderWidth: 2, tension: 0.4, pointRadius: 0, fill: true, backgroundColor: 'rgba(16, 185, 129, 0.1)' }] },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { display: false },
+                        y: { grid: { color: theme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }, ticks: { color: textColor, maxTicksLimit: 5 } }
+                    }
+                }
+            });
+        } else {
+            temporalCharts[idx].data.labels = new Array(temporalData.length).fill('');
+            temporalCharts[idx].data.datasets[0].data = temporalData;
+            temporalCharts[idx].update('none');
         }
     }
+
+    function closeExistingConnections() { activeSockets.forEach(s => s.close()); activeSockets = []; }
+    function handleError(idx) { const s = document.getElementById(`status-${idx}`); if(s){ s.innerText='Error'; s.className='badge bg-danger'; } }
+
+    init();
 </script>
 </body>
 </html>

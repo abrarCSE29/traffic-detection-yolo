@@ -6,6 +6,7 @@ import base64
 import asyncio
 import numpy as np
 import threading
+import time
 from pathlib import Path
 from collections import Counter
 from typing import Dict
@@ -250,6 +251,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                         raise
                 
                 for frame_idx, result in enumerate(track_results):
+                    t_start = time.time()
                     if stop_event.is_set():
                         print(f"Thread {job_id}: stop requested, ending detection loop")
                         break
@@ -352,13 +354,17 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                     processed_frames = min(total_frames, (frame_idx + 1) * frame_skip)
                     progress = int((processed_frames / total_frames) * 100) if total_frames > 0 else 0
                     
+                    # Compute total loop time (ms)
+                    inf_ms = int((time.time() - t_start) * 1000)
+
                     asyncio.run_coroutine_threadsafe(
                         frame_queue.put({
                             "frame": frame_base64,
                             "progress": progress,
                             "counts": dict(current_counts),
                             "status": "processing",
-                            "target_fps": target_fps
+                            "target_fps": target_fps,
+                            "inference_time": inf_ms
                         }),
                         loop
                     )
