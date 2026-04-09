@@ -653,14 +653,15 @@
 
                         if (data.metadata) {
                             bar.style.width = data.metadata.progress + '%';
-                            if (data.metadata.inference_time) {
-                                globalStats.totalInferenceTime += data.metadata.inference_time;
-                                globalStats.inferenceCount++;
-                                document.getElementById('avg-latency').innerText = Math.round(globalStats.totalInferenceTime/globalStats.inferenceCount) + 'ms';
-                            }
-                            updateUI(idx, data.metadata.current_counts, data.metadata.cumulative_counts, data.metadata.avg_speed, temporalData);
+                            updateUI(
+                                idx, 
+                                data.metadata.current_counts, 
+                                data.metadata.cumulative_counts, 
+                                data.metadata.avg_speed, 
+                                data.metadata.inference_time,
+                                temporalData
+                            );
                         }
-                        
                         bufferSpan.innerText = frameQueue.length;
                         await new Promise(r => setTimeout(r, 1000/targetFps));
                     } catch (playErr) {
@@ -678,7 +679,7 @@
     // State to track unique counts per slot for global aggregation
     let slotUniqueCounts = {};
 
-    function updateUI(idx, currentCounts, cumulativeCounts, avgSpeed, temporalData) {
+    function updateUI(idx, currentCounts, cumulativeCounts, avgSpeed, inferenceTime, temporalData) {
         // 1. Update cumulative 'Vehicles Tracked' card
         const cumValues = Object.values(cumulativeCounts);
         const totalUniqueInSlot = cumValues.reduce((a, b) => a + b, 0);
@@ -700,6 +701,14 @@
         // 3. Update 'Avg Traffic Speed' card
         if (avgSpeed > 0) {
             document.getElementById('avg-speed').innerHTML = `${avgSpeed} <span style="font-size: 0.8rem; font-weight: 500;">km/h</span>`;
+        }
+
+        // 4. Update 'Avg Processing' card
+        if (inferenceTime) {
+            globalStats.totalInferenceTime += inferenceTime;
+            globalStats.inferenceCount++;
+            const avgLat = Math.round(globalStats.totalInferenceTime / globalStats.inferenceCount);
+            document.getElementById('avg-latency').innerText = avgLat + 'ms';
         }
 
         // 3. Update Bar Chart (Live Density)
