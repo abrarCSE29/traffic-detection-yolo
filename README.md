@@ -4,7 +4,7 @@ A real-time traffic monitoring system that detects, tracks, and analyzes vehicle
 
 > **Demo:** Upload any traffic video or use the built-in demo feed to get live detection, per-class counting, speed estimation, and temporal flow charts — all streamed to the browser at ~15 FPS via WebSocket.
 
-![Dashboard Preview](docs/preview.png)
+![Dashboard Preview](docs/demo.gif)
 <!-- Replace with an actual screenshot or GIF of the running app -->
 
 ---
