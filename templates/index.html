@@ -514,12 +514,16 @@
                 </div>
                 <div class="d-flex flex-column gap-3">
                     <div class="glass-card p-3 flex-grow-1">
-                        <span class="control-label mb-2">Object Density</span>
+                        <span class="control-label mb-2">Tracked by Class</span>
                         <div style="height: 180px;"><canvas id="chart-${idx}"></canvas></div>
                     </div>
                     <div class="glass-card p-3">
-                        <span class="control-label mb-2">Temporal Flow</span>
+                        <span class="control-label mb-2">Vehicles in Frame (last 50)</span>
                         <div style="height: 140px;"><canvas id="temporal-${idx}"></canvas></div>
+                    </div>
+                    <div class="glass-card p-3" id="speed-card-${idx}">
+                        <span class="control-label mb-2">Avg Speed by Class</span>
+                        <div id="speed-list-${idx}" class="text-muted small text-center py-1">No speed data yet</div>
                     </div>
                 </div>
             </div>
@@ -568,6 +572,7 @@
         let isPlaying = false;
         let targetFps = 15;
         let temporalData = [];
+        let speedData = [];
         let currentMetadata = null;
 
         // ATTACH HANDLERS IMMEDIATELY
@@ -592,6 +597,8 @@
                         const totalInFrame = Object.values(msg.current_counts).reduce((a,b)=>a+b, 0);
                         temporalData.push(totalInFrame);
                         if (temporalData.length > 50) temporalData.shift();
+                        speedData.push(msg.avg_speed || 0);
+                        if (speedData.length > 50) speedData.shift();
                     } else if (msg.status === 'completed') {
                         console.log(`Job ${jobId}: Completed`);
                         status.innerText = 'Finished'; 
@@ -603,7 +610,7 @@
                 } else {
                     // Binary frame data
                     if (!currentMetadata) {
-                        currentMetadata = { current_counts: {}, cumulative_counts: {}, progress: 0, avg_speed: 0 };
+                        currentMetadata = { current_counts: {}, cumulative_counts: {}, progress: 0, avg_speed: 0, class_speeds: {} };
                     }
                     
                     frameQueue.push({
@@ -654,12 +661,14 @@
                         if (data.metadata) {
                             bar.style.width = data.metadata.progress + '%';
                             updateUI(
-                                idx, 
-                                data.metadata.current_counts, 
-                                data.metadata.cumulative_counts, 
-                                data.metadata.avg_speed, 
+                                idx,
+                                data.metadata.current_counts,
+                                data.metadata.cumulative_counts,
+                                data.metadata.avg_speed,
                                 data.metadata.inference_time,
-                                temporalData
+                                temporalData,
+                                speedData,
+                                data.metadata.class_speeds || {}
                             );
                         }
                         bufferSpan.innerText = frameQueue.length;
@@ -679,7 +688,7 @@
     // State to track unique counts per slot for global aggregation
     let slotUniqueCounts = {};
 
-    function updateUI(idx, currentCounts, cumulativeCounts, avgSpeed, inferenceTime, temporalData) {
+    function updateUI(idx, currentCounts, cumulativeCounts, avgSpeed, inferenceTime, temporalData, speedData, classSpeeds) {
         // 1. Update cumulative 'Vehicles Tracked' card
         const cumValues = Object.values(cumulativeCounts);
         const totalUniqueInSlot = cumValues.reduce((a, b) => a + b, 0);
@@ -711,12 +720,17 @@
             document.getElementById('avg-latency').innerText = avgLat + 'ms';
         }
 
-        // 3. Update Bar Chart (Live Density)
+        // Sort cumulative counts descending for bar chart
+        const sortedEntries = Object.entries(cumulativeCounts).sort((a, b) => b[1] - a[1]);
+        const chartLabels = sortedEntries.map(([k]) => k);
+        const chartValues = sortedEntries.map(([, v]) => v);
+
+        // 3. Update Bar Chart (Tracked by Class)
         if (!charts[idx]) {
             const ctx = document.getElementById(`chart-${idx}`).getContext('2d');
             charts[idx] = new Chart(ctx, {
                 type: 'bar',
-                data: { labels: currentLabels, datasets: [{ data: currentValues, backgroundColor: '#0284c7', borderRadius: 4 }] },
+                data: { labels: chartLabels, datasets: [{ data: chartValues, backgroundColor: '#0284c7', borderRadius: 4 }] },
                 options: {
                     responsive: true, maintainAspectRatio: false, indexAxis: 'y',
                     plugins: { legend: { display: false } },
@@ -727,29 +741,89 @@
                 }
             });
         } else {
-            charts[idx].data.labels = currentLabels;
-            charts[idx].data.datasets[0].data = currentValues;
+            charts[idx].data.labels = chartLabels;
+            charts[idx].data.datasets[0].data = chartValues;
             charts[idx].update('none');
         }
 
+        const temporalLabels = new Array(temporalData.length).fill('');
         if (!temporalCharts[idx]) {
             const ctx = document.getElementById(`temporal-${idx}`).getContext('2d');
             temporalCharts[idx] = new Chart(ctx, {
                 type: 'line',
-                data: { labels: new Array(temporalData.length).fill(''), datasets: [{ data: temporalData, borderColor: '#059669', borderWidth: 2, tension: 0.4, pointRadius: 0, fill: true, backgroundColor: 'rgba(5, 150, 105, 0.05)' }] },
+                data: {
+                    labels: temporalLabels,
+                    datasets: [
+                        {
+                            label: 'Vehicles',
+                            data: temporalData,
+                            borderColor: '#059669', borderWidth: 2, tension: 0.4,
+                            pointRadius: 0, fill: true, backgroundColor: 'rgba(5, 150, 105, 0.05)',
+                            yAxisID: 'yVehicles'
+                        },
+                        {
+                            label: 'Avg Speed',
+                            data: speedData,
+                            borderColor: '#f59e0b', borderWidth: 2, tension: 0.4,
+                            pointRadius: 0, fill: false, borderDash: [4, 3],
+                            yAxisID: 'ySpeed'
+                        }
+                    ]
+                },
                 options: {
                     responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { display: true, labels: { boxWidth: 10, font: { size: 10 }, color: '#64748b' } },
+                        tooltip: {
+                            callbacks: {
+                                title: () => '',
+                                label: (ctx) => ctx.dataset.label === 'Avg Speed'
+                                    ? ` ${ctx.parsed.y} km/h`
+                                    : ` ${ctx.parsed.y} vehicles`
+                            }
+                        }
+                    },
                     scales: {
                         x: { display: false },
-                        y: { grid: { color: '#f1f5f9' }, ticks: { color: '#64748b', maxTicksLimit: 5 } }
+                        yVehicles: {
+                            position: 'left',
+                            grid: { color: '#f1f5f9' },
+                            ticks: { color: '#059669', maxTicksLimit: 4, stepSize: 1 },
+                            title: { display: true, text: 'Vehicles', color: '#059669', font: { size: 10 } }
+                        },
+                        ySpeed: {
+                            position: 'right',
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#f59e0b', maxTicksLimit: 4 },
+                            title: { display: true, text: 'km/h', color: '#f59e0b', font: { size: 10 } }
+                        }
                     }
                 }
             });
         } else {
-            temporalCharts[idx].data.labels = new Array(temporalData.length).fill('');
+            temporalCharts[idx].data.labels = temporalLabels;
             temporalCharts[idx].data.datasets[0].data = temporalData;
+            temporalCharts[idx].data.datasets[1].data = speedData;
             temporalCharts[idx].update('none');
+        }
+
+        // Speed by class card
+        const speedList = document.getElementById(`speed-list-${idx}`);
+        if (speedList) {
+            const entries = Object.entries(classSpeeds).sort((a, b) => b[1] - a[1]).slice(0, 3);
+            const rows = [...entries];
+            while (rows.length < 3) rows.push(null);
+            speedList.innerHTML = rows.map(([cls, speed] = []) => cls
+                ? `<div class="d-flex justify-content-between align-items-center py-1 border-bottom" style="border-color: var(--border-color) !important;">
+                       <span style="font-size: 0.85rem; font-weight: 500;">${cls}</span>
+                       <span class="badge" style="background: #f59e0b; color: #1e293b; font-size: 0.8rem;">${speed} km/h</span>
+                   </div>`
+                : `<div class="d-flex justify-content-between align-items-center py-1 border-bottom" style="border-color: var(--border-color) !important;">
+                       <span style="font-size: 0.85rem; color: var(--text-muted);">—</span>
+                       <span style="font-size: 0.8rem; color: var(--text-muted);">—</span>
+                   </div>`
+            ).join('');
         }
     }
 

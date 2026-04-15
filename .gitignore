@@ -11,3 +11,5 @@ cookies/*
 .env
 __pycache__
 !cookies/.gitkeep
+*.md
+!README.md

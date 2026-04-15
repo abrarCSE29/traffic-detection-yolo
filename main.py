@@ -210,6 +210,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                     frame = result.orig_img # No copy here, do it in post-process if needed
                     current_frame_counts = Counter()
                     current_speeds = []
+                    current_class_speeds = {}
                     boxes_to_draw = []
                     
                     if result.boxes is not None and result.boxes.id is not None:
@@ -239,6 +240,8 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                                     if time_diff > 0:
                                         speed_kmh = ((pixel_dist * PX_TO_METER) / time_diff) * 3.6
                                         current_speeds.append(speed_kmh)
+                                        if speed_kmh > 2:
+                                            current_class_speeds.setdefault(class_name, []).append(speed_kmh)
                                     if len(track_history[track_id]) > 20: track_history[track_id].pop(0)
                                 
                                 boxes_to_draw.append({
@@ -268,12 +271,17 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                     progress = int((processed_frames / total_frames) * 100) if total_frames > 0 else 0
                     inf_ms = int((time.time() - t_start) * 1000)
                     avg_speed = sum(current_speeds)/len(current_speeds) if current_speeds else 0
+                    class_avg_speeds = {
+                        cls: round(sum(speeds) / len(speeds), 1)
+                        for cls, speeds in current_class_speeds.items()
+                    }
 
                     m_payload = {
                         "type": "metadata", "progress": progress,
                         "current_counts": dict(current_frame_counts),
                         "cumulative_counts": dict(class_counts),
                         "avg_speed": round(avg_speed, 1),
+                        "class_speeds": class_avg_speeds,
                         "status": "processing", "target_fps": target_fps,
                         "inference_time": inf_ms
                     }
