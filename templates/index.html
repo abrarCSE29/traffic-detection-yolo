@@ -346,8 +346,8 @@
                 <div class="kpi-value" id="avg-latency">--ms</div>
             </div>
             <div class="glass-card kpi-card">
-                <div class="kpi-label">Active Feeds</div>
-                <div class="kpi-value" id="active-sockets-val">0</div>
+                <div class="kpi-label">Avg Traffic Speed</div>
+                <div class="kpi-value" id="avg-speed">0 <span style="font-size: 0.8rem; font-weight: 500;">km/h</span></div>
             </div>
         </div>
 
@@ -421,8 +421,22 @@
             div.onclick = (e) => {
                 if(e.target !== cb) cb.checked = !cb.checked;
                 div.classList.toggle('active', cb.checked);
+                broadcastFilterUpdate(); // Real-time update
             };
             classFilters.appendChild(div);
+        });
+    }
+
+    function broadcastFilterUpdate() {
+        const selectedStr = getSelectedClasses();
+        const selected = selectedStr ? selectedStr.split(',') : [];
+        activeSockets.forEach(socket => {
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({
+                    type: "filter_update",
+                    filter_classes: selected
+                }));
+            }
         });
     }
 
@@ -432,7 +446,7 @@
     }
 
     function getSelectedClasses() {
-        return Array.from(document.querySelectorAll('.filter-item input:checked')).map(cb => cb.value).join(',') || 'all';
+        return Array.from(document.querySelectorAll('.filter-item input:checked')).map(cb => cb.value).join(',');
     }
 
     startBtn.onclick = () => {
@@ -442,23 +456,32 @@
 
     demoBtn.onclick = () => processJobs([null], 'demo');
 
-    selectAllBtn.onclick = () => document.querySelectorAll('.filter-item').forEach(el => {
-        el.classList.add('active');
-        el.querySelector('input').checked = true;
-    });
+    selectAllBtn.onclick = () => {
+        document.querySelectorAll('.filter-item').forEach(el => {
+            el.classList.add('active');
+            el.querySelector('input').checked = true;
+        });
+        broadcastFilterUpdate();
+    };
     
-    deselectAllBtn.onclick = () => document.querySelectorAll('.filter-item').forEach(el => {
-        el.classList.remove('active');
-        el.querySelector('input').checked = false;
-    });
+    deselectAllBtn.onclick = () => {
+        document.querySelectorAll('.filter-item').forEach(el => {
+            el.classList.remove('active');
+            el.querySelector('input').checked = false;
+        });
+        broadcastFilterUpdate();
+    };
 
     function processJobs(items, type) {
         closeExistingConnections();
         activeModalSlot = null;
+        slotUniqueCounts = {}; // Reset cumulative counts for new session
         streamsContainer.innerHTML = '';
         emptyState.classList.add('hidden');
         charts = []; temporalCharts = []; activeJobs = [];
         globalStats = { totalObjects: 0, peakObjects: 0, totalInferenceTime: 0, inferenceCount: 0 };
+        document.getElementById('total-tracked').innerText = '0';
+        document.getElementById('peak-intensity').innerText = '0';
         
         const selectedClasses = getSelectedClasses();
 
@@ -478,7 +501,7 @@
                         <div class="live-badge" id="badge-${idx}">
                             <i class="fas fa-circle"></i> LIVE
                         </div>
-                        <img id="frame-${idx}" class="w-100 h-100" style="object-fit: contain;">
+                        <img id="frame-${idx}" class="w-100 h-100" style="object-fit: contain; min-height: 100px; display: block;">
                         <div class="position-absolute bottom-0 end-0 p-3">
                             <div class="stat-pill">BUFFER: <span id="buffer-${idx}">0</span></div>
                         </div>
@@ -491,12 +514,16 @@
                 </div>
                 <div class="d-flex flex-column gap-3">
                     <div class="glass-card p-3 flex-grow-1">
-                        <span class="control-label mb-2">Object Density</span>
+                        <span class="control-label mb-2">Tracked by Class</span>
                         <div style="height: 180px;"><canvas id="chart-${idx}"></canvas></div>
                     </div>
                     <div class="glass-card p-3">
-                        <span class="control-label mb-2">Temporal Flow</span>
+                        <span class="control-label mb-2">Vehicles in Frame (last 50)</span>
                         <div style="height: 140px;"><canvas id="temporal-${idx}"></canvas></div>
+                    </div>
+                    <div class="glass-card p-3" id="speed-card-${idx}">
+                        <span class="control-label mb-2">Avg Speed by Class</span>
+                        <div id="speed-list-${idx}" class="text-muted small text-center py-1">No speed data yet</div>
                     </div>
                 </div>
             </div>
@@ -532,10 +559,10 @@
     }
 
     function connectWS(idx, jobId) {
+        console.log(`Job ${jobId}: Initiating connection...`);
         const socket = new WebSocket(`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/ws/${jobId}`);
-        activeSockets.push(socket);
-        document.getElementById('active-sockets-val').innerText = activeSockets.length;
-
+        socket.binaryType = 'blob'; 
+        
         const frame = document.getElementById(`frame-${idx}`);
         const bar = document.getElementById(`bar-${idx}`);
         const status = document.getElementById(`status-${idx}`);
@@ -545,69 +572,165 @@
         let isPlaying = false;
         let targetFps = 15;
         let temporalData = [];
+        let speedData = [];
+        let currentMetadata = null;
+
+        // ATTACH HANDLERS IMMEDIATELY
+        socket.onopen = () => {
+            console.log(`Job ${jobId}: WebSocket connected`);
+            activeSockets.push(socket);
+            document.getElementById('active-sockets-val').innerText = activeSockets.length;
+        };
+
+        socket.onmessage = (e) => {
+            try {
+                if (typeof e.data === 'string') {
+                    const msg = JSON.parse(e.data);
+                    console.log(`Job ${jobId}: Received JSON`, msg.type || msg.status);
+                    
+                    if (msg.status === 'processing' && msg.type === 'metadata') {
+                        status.innerText = 'Streaming'; 
+                        status.className = 'badge bg-primary';
+                        targetFps = msg.target_fps || 15;
+                        currentMetadata = msg;
+                        
+                        const totalInFrame = Object.values(msg.current_counts).reduce((a,b)=>a+b, 0);
+                        temporalData.push(totalInFrame);
+                        if (temporalData.length > 50) temporalData.shift();
+                        speedData.push(msg.avg_speed || 0);
+                        if (speedData.length > 50) speedData.shift();
+                    } else if (msg.status === 'completed') {
+                        console.log(`Job ${jobId}: Completed`);
+                        status.innerText = 'Finished'; 
+                        status.className = 'badge bg-success';
+                    } else if (msg.error) {
+                        console.error(`Job ${jobId}: Backend error:`, msg.error);
+                        handleError(idx);
+                    }
+                } else {
+                    // Binary frame data
+                    if (!currentMetadata) {
+                        currentMetadata = { current_counts: {}, cumulative_counts: {}, progress: 0, avg_speed: 0, class_speeds: {} };
+                    }
+                    
+                    frameQueue.push({
+                        blob: e.data,
+                        metadata: JSON.parse(JSON.stringify(currentMetadata))
+                    });
+                    
+                    if (!isPlaying) play();
+                }
+            } catch (msgErr) {
+                console.error(`Job ${jobId}: Message handling error:`, msgErr);
+            }
+        };
+
+        socket.onerror = (err) => console.error(`Job ${jobId}: WebSocket error observed:`, err);
+        
+        socket.onclose = (e) => {
+            console.log(`Job ${jobId}: WebSocket closed (${e.code})`);
+            activeSockets = activeSockets.filter(s => s !== socket);
+            document.getElementById('active-sockets-val').innerText = activeSockets.length;
+        };
 
         async function play() {
             if (isPlaying) return;
             isPlaying = true;
+            console.log(`Slot ${idx}: Starting playback loop`);
+            
             while (frameQueue.length > 0 || socket.readyState === WebSocket.OPEN) {
                 if (frameQueue.length > 0) {
-                    const data = frameQueue.shift();
-                    const b64 = "data:image/jpeg;base64," + data.frame;
-                    frame.src = b64;
-                    if (activeModalSlot === idx) modalVideo.src = b64;
-                    
-                    bar.style.width = data.progress + '%';
-                    bufferSpan.innerText = frameQueue.length;
-                    
-                    if (data.inference_time) {
-                        globalStats.totalInferenceTime += data.inference_time;
-                        globalStats.inferenceCount++;
-                        document.getElementById('avg-latency').innerText = Math.round(globalStats.totalInferenceTime/globalStats.inferenceCount) + 'ms';
+                    try {
+                        const data = frameQueue.shift();
+                        const blob = (data.blob instanceof Blob) ? data.blob : new Blob([data.blob], { type: 'image/jpeg' });
+                        if (blob.size === 0) continue;
+
+                        const blobUrl = URL.createObjectURL(blob);
+                        
+                        frame.onload = () => {
+                            setTimeout(() => URL.revokeObjectURL(blobUrl), 200);
+                        };
+                        
+                        frame.onerror = (err) => {
+                            console.error(`Slot ${idx}: Image load error for URL ${blobUrl}`, err);
+                        };
+
+                        frame.src = blobUrl;
+                        if (activeModalSlot === idx) modalVideo.src = blobUrl;
+
+                        if (data.metadata) {
+                            bar.style.width = data.metadata.progress + '%';
+                            updateUI(
+                                idx,
+                                data.metadata.current_counts,
+                                data.metadata.cumulative_counts,
+                                data.metadata.avg_speed,
+                                data.metadata.inference_time,
+                                temporalData,
+                                speedData,
+                                data.metadata.class_speeds || {}
+                            );
+                        }
+                        bufferSpan.innerText = frameQueue.length;
+                        await new Promise(r => setTimeout(r, 1000/targetFps));
+                    } catch (playErr) {
+                        console.error(`Slot ${idx}: Playback error:`, playErr);
                     }
-                    updateUI(idx, data.counts, temporalData);
-                    await new Promise(r => setTimeout(r, 1000/targetFps));
-                } else await new Promise(r => setTimeout(r, 50));
+                } else {
+                    await new Promise(r => setTimeout(r, 50));
+                }
             }
             isPlaying = false;
+            console.log(`Slot ${idx}: Playback loop ended`);
         }
-
-        socket.onmessage = (e) => {
-            const msg = JSON.parse(e.data);
-            if (msg.status === 'processing' && msg.frame) {
-                status.innerText = 'Streaming'; status.className = 'badge bg-primary';
-                targetFps = msg.target_fps || 15;
-                frameQueue.push(msg);
-                const total = Object.values(msg.counts).reduce((a,b)=>a+b, 0);
-                temporalData.push(total);
-                if (temporalData.length > 50) temporalData.shift();
-                if (!isPlaying) play();
-            } else if (msg.status === 'completed') {
-                status.innerText = 'Finished'; status.className = 'badge bg-success';
-            }
-        };
-        socket.onclose = () => {
-            activeSockets = activeSockets.filter(s => s !== socket);
-            document.getElementById('active-sockets-val').innerText = activeSockets.length;
-        };
     }
 
-    function updateUI(idx, counts, temporalData) {
-        const labels = Object.keys(counts);
-        const values = Object.values(counts);
-        const total = values.reduce((a,b)=>a+b, 0);
+    // State to track unique counts per slot for global aggregation
+    let slotUniqueCounts = {};
 
-        globalStats.totalObjects += total / 30;
-        document.getElementById('total-tracked').innerText = Math.floor(globalStats.totalObjects);
-        if (total > globalStats.peakObjects) {
-            globalStats.peakObjects = total;
-            document.getElementById('peak-intensity').innerText = total;
+    function updateUI(idx, currentCounts, cumulativeCounts, avgSpeed, inferenceTime, temporalData, speedData, classSpeeds) {
+        // 1. Update cumulative 'Vehicles Tracked' card
+        const cumValues = Object.values(cumulativeCounts);
+        const totalUniqueInSlot = cumValues.reduce((a, b) => a + b, 0);
+        slotUniqueCounts[idx] = totalUniqueInSlot;
+        
+        const grandTotal = Object.values(slotUniqueCounts).reduce((a, b) => a + b, 0);
+        document.getElementById('total-tracked').innerText = grandTotal;
+
+        // 2. Update 'Peak Intensity' card
+        const currentLabels = Object.keys(currentCounts);
+        const currentValues = Object.values(currentCounts);
+        const totalInCurrentFrame = currentValues.reduce((a, b) => a + b, 0);
+
+        if (totalInCurrentFrame > globalStats.peakObjects) {
+            globalStats.peakObjects = totalInCurrentFrame;
+            document.getElementById('peak-intensity').innerText = globalStats.peakObjects;
         }
 
+        // 3. Update 'Avg Traffic Speed' card
+        if (avgSpeed > 0) {
+            document.getElementById('avg-speed').innerHTML = `${avgSpeed} <span style="font-size: 0.8rem; font-weight: 500;">km/h</span>`;
+        }
+
+        // 4. Update 'Avg Processing' card
+        if (inferenceTime) {
+            globalStats.totalInferenceTime += inferenceTime;
+            globalStats.inferenceCount++;
+            const avgLat = Math.round(globalStats.totalInferenceTime / globalStats.inferenceCount);
+            document.getElementById('avg-latency').innerText = avgLat + 'ms';
+        }
+
+        // Sort cumulative counts descending for bar chart
+        const sortedEntries = Object.entries(cumulativeCounts).sort((a, b) => b[1] - a[1]);
+        const chartLabels = sortedEntries.map(([k]) => k);
+        const chartValues = sortedEntries.map(([, v]) => v);
+
+        // 3. Update Bar Chart (Tracked by Class)
         if (!charts[idx]) {
             const ctx = document.getElementById(`chart-${idx}`).getContext('2d');
             charts[idx] = new Chart(ctx, {
                 type: 'bar',
-                data: { labels, datasets: [{ data: values, backgroundColor: '#0284c7', borderRadius: 4 }] },
+                data: { labels: chartLabels, datasets: [{ data: chartValues, backgroundColor: '#0284c7', borderRadius: 4 }] },
                 options: {
                     responsive: true, maintainAspectRatio: false, indexAxis: 'y',
                     plugins: { legend: { display: false } },
@@ -618,29 +741,89 @@
                 }
             });
         } else {
-            charts[idx].data.labels = labels;
-            charts[idx].data.datasets[0].data = values;
+            charts[idx].data.labels = chartLabels;
+            charts[idx].data.datasets[0].data = chartValues;
             charts[idx].update('none');
         }
 
+        const temporalLabels = new Array(temporalData.length).fill('');
         if (!temporalCharts[idx]) {
             const ctx = document.getElementById(`temporal-${idx}`).getContext('2d');
             temporalCharts[idx] = new Chart(ctx, {
                 type: 'line',
-                data: { labels: new Array(temporalData.length).fill(''), datasets: [{ data: temporalData, borderColor: '#059669', borderWidth: 2, tension: 0.4, pointRadius: 0, fill: true, backgroundColor: 'rgba(5, 150, 105, 0.05)' }] },
+                data: {
+                    labels: temporalLabels,
+                    datasets: [
+                        {
+                            label: 'Vehicles',
+                            data: temporalData,
+                            borderColor: '#059669', borderWidth: 2, tension: 0.4,
+                            pointRadius: 0, fill: true, backgroundColor: 'rgba(5, 150, 105, 0.05)',
+                            yAxisID: 'yVehicles'
+                        },
+                        {
+                            label: 'Avg Speed',
+                            data: speedData,
+                            borderColor: '#f59e0b', borderWidth: 2, tension: 0.4,
+                            pointRadius: 0, fill: false, borderDash: [4, 3],
+                            yAxisID: 'ySpeed'
+                        }
+                    ]
+                },
                 options: {
                     responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { display: true, labels: { boxWidth: 10, font: { size: 10 }, color: '#64748b' } },
+                        tooltip: {
+                            callbacks: {
+                                title: () => '',
+                                label: (ctx) => ctx.dataset.label === 'Avg Speed'
+                                    ? ` ${ctx.parsed.y} km/h`
+                                    : ` ${ctx.parsed.y} vehicles`
+                            }
+                        }
+                    },
                     scales: {
                         x: { display: false },
-                        y: { grid: { color: '#f1f5f9' }, ticks: { color: '#64748b', maxTicksLimit: 5 } }
+                        yVehicles: {
+                            position: 'left',
+                            grid: { color: '#f1f5f9' },
+                            ticks: { color: '#059669', maxTicksLimit: 4, stepSize: 1 },
+                            title: { display: true, text: 'Vehicles', color: '#059669', font: { size: 10 } }
+                        },
+                        ySpeed: {
+                            position: 'right',
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#f59e0b', maxTicksLimit: 4 },
+                            title: { display: true, text: 'km/h', color: '#f59e0b', font: { size: 10 } }
+                        }
                     }
                 }
             });
         } else {
-            temporalCharts[idx].data.labels = new Array(temporalData.length).fill('');
+            temporalCharts[idx].data.labels = temporalLabels;
             temporalCharts[idx].data.datasets[0].data = temporalData;
+            temporalCharts[idx].data.datasets[1].data = speedData;
             temporalCharts[idx].update('none');
+        }
+
+        // Speed by class card
+        const speedList = document.getElementById(`speed-list-${idx}`);
+        if (speedList) {
+            const entries = Object.entries(classSpeeds).sort((a, b) => b[1] - a[1]).slice(0, 3);
+            const rows = [...entries];
+            while (rows.length < 3) rows.push(null);
+            speedList.innerHTML = rows.map(([cls, speed] = []) => cls
+                ? `<div class="d-flex justify-content-between align-items-center py-1 border-bottom" style="border-color: var(--border-color) !important;">
+                       <span style="font-size: 0.85rem; font-weight: 500;">${cls}</span>
+                       <span class="badge" style="background: #f59e0b; color: #1e293b; font-size: 0.8rem;">${speed} km/h</span>
+                   </div>`
+                : `<div class="d-flex justify-content-between align-items-center py-1 border-bottom" style="border-color: var(--border-color) !important;">
+                       <span style="font-size: 0.85rem; color: var(--text-muted);">—</span>
+                       <span style="font-size: 0.8rem; color: var(--text-muted);">—</span>
+                   </div>`
+            ).join('');
         }
     }
 
