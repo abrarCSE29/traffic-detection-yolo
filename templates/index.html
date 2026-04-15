@@ -349,6 +349,10 @@
                 <div class="kpi-label">Avg Traffic Speed</div>
                 <div class="kpi-value" id="avg-speed">0 <span style="font-size: 0.8rem; font-weight: 500;">km/h</span></div>
             </div>
+            <div class="glass-card kpi-card">
+                <div class="kpi-label">Active Streams</div>
+                <div class="kpi-value" id="active-sockets-val">0</div>
+            </div>
         </div>
 
         <div id="streamsContainer">
@@ -482,6 +486,7 @@
         globalStats = { totalObjects: 0, peakObjects: 0, totalInferenceTime: 0, inferenceCount: 0 };
         document.getElementById('total-tracked').innerText = '0';
         document.getElementById('peak-intensity').innerText = '0';
+        document.getElementById('active-sockets-val').innerText = '0';
         
         const selectedClasses = getSelectedClasses();
 
@@ -577,7 +582,6 @@
 
         // ATTACH HANDLERS IMMEDIATELY
         socket.onopen = () => {
-            console.log(`Job ${jobId}: WebSocket connected`);
             activeSockets.push(socket);
             document.getElementById('active-sockets-val').innerText = activeSockets.length;
         };
@@ -586,8 +590,6 @@
             try {
                 if (typeof e.data === 'string') {
                     const msg = JSON.parse(e.data);
-                    console.log(`Job ${jobId}: Received JSON`, msg.type || msg.status);
-                    
                     if (msg.status === 'processing' && msg.type === 'metadata') {
                         status.innerText = 'Streaming'; 
                         status.className = 'badge bg-primary';
@@ -600,12 +602,12 @@
                         speedData.push(msg.avg_speed || 0);
                         if (speedData.length > 50) speedData.shift();
                     } else if (msg.status === 'completed') {
-                        console.log(`Job ${jobId}: Completed`);
-                        status.innerText = 'Finished'; 
+                        status.innerText = 'Finished';
                         status.className = 'badge bg-success';
+                        socket.close();
                     } else if (msg.error) {
-                        console.error(`Job ${jobId}: Backend error:`, msg.error);
                         handleError(idx);
+                        socket.close();
                     }
                 } else {
                     // Binary frame data
@@ -628,7 +630,6 @@
         socket.onerror = (err) => console.error(`Job ${jobId}: WebSocket error observed:`, err);
         
         socket.onclose = (e) => {
-            console.log(`Job ${jobId}: WebSocket closed (${e.code})`);
             activeSockets = activeSockets.filter(s => s !== socket);
             document.getElementById('active-sockets-val').innerText = activeSockets.length;
         };
@@ -636,7 +637,6 @@
         async function play() {
             if (isPlaying) return;
             isPlaying = true;
-            console.log(`Slot ${idx}: Starting playback loop`);
             
             while (frameQueue.length > 0 || socket.readyState === WebSocket.OPEN) {
                 if (frameQueue.length > 0) {
@@ -681,7 +681,6 @@
                 }
             }
             isPlaying = false;
-            console.log(`Slot ${idx}: Playback loop ended`);
         }
     }
 
@@ -813,7 +812,7 @@
         if (speedList) {
             const entries = Object.entries(classSpeeds).sort((a, b) => b[1] - a[1]).slice(0, 3);
             const rows = [...entries];
-            while (rows.length < 3) rows.push(null);
+            while (rows.length < 3) rows.push(undefined);
             speedList.innerHTML = rows.map(([cls, speed] = []) => cls
                 ? `<div class="d-flex justify-content-between align-items-center py-1 border-bottom" style="border-color: var(--border-color) !important;">
                        <span style="font-size: 0.85rem; font-weight: 500;">${cls}</span>
