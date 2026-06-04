@@ -2,7 +2,6 @@
 
 A real-time traffic monitoring system that detects, tracks, and analyzes vehicles and pedestrians in video streams via a browser-based dashboard. Built with a custom-trained YOLOv8n model on Bangladeshi urban traffic.
 
-> **Demo:** [https://traffic-ai.abrarhameem.me](https://traffic-ai.abrarhameem.me) — Upload any traffic video or use the built-in demo feed to get live detection, per-class counting, speed estimation, and temporal flow charts — all streamed to the browser at ~15 FPS via WebSocket.
 
 ![Dashboard Preview](docs/demo.gif)
 <!-- Replace with an actual screenshot or GIF of the running app -->
